@@ -23,6 +23,7 @@ Client/CTestTestfile.cmake
 Client/_deps
 
 Client/cmake-build-debug
+Client/.idea
 
 Server/CMakeLists.txt
 Server/CMakeCache.txt
@@ -37,3 +38,4 @@ Server/CTestTestfile.cmake
 Server/_deps
 
 Server/cmake-build-debug
+Server/.idea
