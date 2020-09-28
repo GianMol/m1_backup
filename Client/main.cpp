@@ -1,12 +1,22 @@
 #include <iostream>
 #include "FileWatcher.h"
 #include <filesystem>
-
 #include <boost/thread.hpp>
+
+#if defined(_WIN32) //Windows 32
+    #define SO "Windows"
+#elif defined(_WIN64) //Windows 64
+    #define SO "Windows"
+#elif defined(__APPLE__) && defined(__MACH__) // Apple OSX and iOS (Darwin)
+    #define SO "Apple"
+#elif defined(__linux__) // Debian, Ubuntu, Gentoo, Fedora, openSUSE, RedHat, Centos and other
+    #define SO "Linux"
+#endif
 
 namespace fs = std::filesystem;
 
 int main(int argc, char* argv[]) {
+    std::cout << SO << std::endl;
     if(argc < 2){
         std::cerr << "Error: parameters missing";
         return -1;
