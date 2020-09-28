@@ -1,12 +1,25 @@
 #include <iostream>
 #include "FileWatcher.h"
 #include <filesystem>
-
 #include <boost/thread.hpp>
 
 namespace fs = std::filesystem;
 
+#if defined(_WIN32)
+    #define PLATFORM_NAME "windows" // Windows
+#elif defined(_WIN64)
+    #define PLATFORM_NAME "windows" // Windows
+#elif defined(__CYGWIN__) && !defined(_WIN32)
+    #define PLATFORM_NAME "windows" // Windows (Cygwin POSIX under Microsoft Window)
+#elif defined(__linux__)
+    #define PLATFORM_NAME "linux" // Linux
+#elif defined(__APPLE__) && defined(__MACH__)
+    #define PLATFORM_NAME "apple" // Linux
+#endif
+
+
 int main(int argc, char* argv[]) {
+    std::cout<<PLATFORM_NAME<<std::endl;
     if(argc < 2){
         std::cerr << "Error: parameters missing";
         return -1;
