@@ -10,6 +10,7 @@ compile_commands.json
 CTestTestfile.cmake
 _deps
 
+.idea
 .DS_Store
 
 Client/CMakeLists.txt
