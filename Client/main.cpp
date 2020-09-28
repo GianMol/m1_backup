@@ -2,7 +2,7 @@
 #include "FileWatcher.h"
 #include <filesystem>
 
-#include <boost/thread.hpp>
+#include <boost/algorithm/string.hpp>
 
 namespace fs = std::filesystem;
 
@@ -12,9 +12,26 @@ int main(int argc, char* argv[]) {
         return -1;
     }
     fs::path folder = argv[1];
+
+    /********************************************* fixing path in case of windows systems *************************************************************************/
+    #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__) || defined(__CYGWIN__)
+
+        std::cout << "Running on Windows" << std::endl;
+        std::string fol = folder.u8string();
+        if (argv[1][1] == ':') { //if path is a windows absolute path
+            std::string buf;
+            buf.assign(1, tolower((argv[1][0])));
+            std::string string = "/cygdrive/" + buf + folder.relative_path().u8string().substr(2);
+            std::replace(string.begin(), string.end(), '\\', '/');
+            folder = string;
+        } else if (fol.find('\\') != std::string::npos) {  //else if path is a windows relative path
+            std::replace(fol.begin(), fol.end(), '\\', '/');
+            folder = fol;
+        }
+    #endif
+
+
     std::cout << "Syncronizing folder " << folder << std::endl;
-
-
 
 
     // Create a FileWatcher instance that will check the current folder for changes every 5 seconds
