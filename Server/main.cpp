@@ -150,10 +150,14 @@ struct packet manage_synch (struct packet req){
         }
     }
 
-    //Creare cartella di backup per l'utente ?se non presente?
+    //Creare cartella di backup per l'utente se non già presente
+    std::ifstream ifile;
     std::string back_folder = "/cygdrive/c/Users/Corrado/Desktop/ex/backup/"+req.id+"/";
     fs::path destination (back_folder);
-    fs::create_directory(destination);
+    ifile.open(destination);
+    if(!ifile) {//The directory doesn't exist yet
+        fs::create_directory(destination);
+    }
     return res;
 }
 
