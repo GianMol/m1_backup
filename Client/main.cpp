@@ -17,30 +17,47 @@ namespace fs = std::filesystem;
 fs::path folder; //it is a global variable in order to get the subdirectories and files relative path
 
 enum operation { create, del, append, end };
-enum type { directory, file, file_empty };
+enum type {modify_request, sync_request, sync_single_file_request, sync_response, auth_request, response};
 
-struct modify_request{
+struct auth_request{
+    std::string packet_type;
     std::string id;
-    fs::path path;
-    operation op;
-    type type;
-    std::string content;
+    std::string password;
 };
 
-struct modify_response{
-    std::string id;
+struct auth_response{
     int res;
+};
+
+struct response{
+    bool res;
     std::string description;
 };
 
-struct sync_protocol_request{
-    std::string id;
+struct modify_request{
+    fs::path path;
+    operation op;
+    std::string content;
+    fs::file_status file_status;
+};
+
+struct sync_request{
     std::map<fs::path, std::string> client_paths;
 };
 
-struct sync_protocol_response{
-    std::string id;
+struct sync_response{
     std::vector<fs::path> modified_paths;
+    std::string description;
+};
+
+struct packet{
+    std::string id;
+    type packet_type;
+    struct auth_request auth;
+    struct modify_request mod;
+    struct response res;
+    struct sync_request sync_req;
+    struct sync_response sync_res;
 };
 
 /***************** PROTOTYPES ***********************/
@@ -154,20 +171,20 @@ int sync(fs::path& directory, std::string& id){
      * the server send to me the modified paths in a vector
      *
      * */
-    struct sync_protocol_response response;
+    struct packet response;
 
     /************************************************ Server emulation *****************************************************************************/
     std::cout << std::endl << "Sono il server. Mappa ricevuta: mando il vettore" << std::endl << std::endl;
-    response.modified_paths.emplace_back("/cygdrive/c/Users/gianl/Desktop/prova/Nuova cartella/documento.txt");
-    response.modified_paths.emplace_back("/cygdrive/c/Users/gianl/Desktop/prova/prova2.txt");
+    response.sync_res.modified_paths.emplace_back("/cygdrive/c/Users/gianl/Desktop/prova/Nuova cartella/documento.txt");
+    response.sync_res.modified_paths.emplace_back("/cygdrive/c/Users/gianl/Desktop/prova/prova2.txt");
     response.id = id;
 
 
-    if(response.id != id){
+    if( response.id != id){
         std::cerr << "Error " << std::endl;
         return 0;
     }
-    for(auto &file : response.modified_paths) {
+    for(auto &file : response.sync_res.modified_paths) {
         if(!send_file(file, id)){
             return 0;
         }
@@ -178,14 +195,14 @@ int sync(fs::path& directory, std::string& id){
     return 1;
 }
 
-struct modify_request create_modify_request(std::string& id, fs::path& path, enum operation op, int i, enum type t, void* buf){
-    struct modify_request pack;
+struct packet create_modify_request(std::string& id, fs::path& path, enum operation op, int i, enum type t, void* buf){
+    struct packet pack;
     pack.id = id;
     std::string p = path;   //we convert std::filesystem::path to a std::string to void problems like file names with spaces
-    pack.path = fs::relative(p, folder);
-    pack.op = op;
-    pack.type = t;
-    if(buf) pack.content = reinterpret_cast<char*>(buf);
+    pack.mod.path = fs::relative(p, folder);
+    pack.mod.op = op;
+    pack.packet_type = t;
+    if(buf) pack.mod.content = reinterpret_cast<char*>(buf);
     return pack;
 }
 
@@ -211,7 +228,7 @@ int send_file(fs::path& path, std::string& id, operation op){
             }
             std::cout << "delete directory: " << path << std::endl;
 
-            struct modify_request pack = create_modify_request(id, path, del, 0, directory, nullptr);
+            struct packet pack = create_modify_request(id, path, del, 0, directory, nullptr);
             std::cout << "path: " << pack.path << " " << "op: " << pack.op << std::endl;
 
             //send to server
@@ -222,7 +239,7 @@ int send_file(fs::path& path, std::string& id, operation op){
              * send path to server
              *
              * */
-            struct modify_request pack = create_modify_request(id, path, create, 0, directory, nullptr);
+            struct packet pack = create_modify_request(id, path, create, 0, directory, nullptr);
             std::cout << "path: " << pack.path << " " << "op: " << pack.op << std::endl;
 
             //send to server
@@ -240,7 +257,7 @@ int send_file(fs::path& path, std::string& id, operation op){
          * */
 
 
-        struct modify_request pack = create_modify_request(id, path, del, 0, file, nullptr);
+        struct packet pack = create_modify_request(id, path, del, 0, file, nullptr);
         std::cout << "path: " << pack.path << " " << "op: " << pack.op << std::endl;
 
         //send to server
