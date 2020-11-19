@@ -1,5 +1,6 @@
 #include <iostream>
 #include "FileWatcher.h"
+#include "Thread_guard.cpp"
 #include <filesystem>
 #include <iostream>
 #include <fstream>
@@ -7,40 +8,61 @@
 #include <map>
 #include <openssl/evp.h>
 #include <string>
-#include <future>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
 
 
 namespace fs = std::filesystem;
 #define SIZE 1024
 
-//global variable socket
-fs::path folder; //it is a global variable in order to get the subdirectories and files relative path
-
-enum operation { create, del, append, end };
-enum type { directory, file, file_empty };
-
-struct modify_request{
-    std::string id;
+struct pair{
     fs::path path;
-    operation op;
-    type type;
-    std::string content;
+    FileStatus status;
 };
 
-struct modify_response{
-    std::string id;
-    int res;
+//global variable socket
+fs::path folder; //it is a global variable in order to get the subdirectories and files relative path
+std::queue<struct pair> queue;
+std::mutex m;
+std::condition_variable cv;
+
+enum operation { create, del, append, end };
+enum type {modify_request, sync_request, sync_single_file_request, sync_response, auth_request, response};
+
+struct auth_request{
+    std::string password;
+};
+
+struct response{
+    bool res;
     std::string description;
 };
 
-struct sync_protocol_request{
-    std::string id;
+struct modify_request{
+    fs::path path;
+    operation op;
+    std::string content;
+    fs::file_status file_status;
+};
+
+struct sync_request{
     std::map<fs::path, std::string> client_paths;
 };
 
-struct sync_protocol_response{
-    std::string id;
+struct sync_response{
     std::vector<fs::path> modified_paths;
+    std::string description;
+};
+
+struct packet{
+    std::string id;
+    type packet_type;
+    struct auth_request auth;
+    struct modify_request mod;
+    struct response res;
+    struct sync_request sync_req;
+    struct sync_response sync_res;
 };
 
 /***************** PROTOTYPES ***********************/
@@ -82,6 +104,29 @@ std::string translate_path_to_win(fs::path& path){
 
     return path;
 }
+
+/*int compute_hash_password(std::string& pass, std::string& hash){
+    EVP_MD_CTX *ctx;
+    unsigned char md_value[EVP_MAX_MD_SIZE];
+    unsigned char buf[SIZE];
+    int len;
+
+    ctx = EVP_MD_CTX_new();
+    EVP_MD_CTX_init(ctx);
+    EVP_DigestInit(ctx, EVP_md5());
+
+    buf = reinterpret_cast< char const* > (pass);
+
+
+    EVP_DigestUpdate(ctx, buf, SIZE);
+
+
+    EVP_DigestFinal_ex(ctx, md_value, reinterpret_cast<unsigned int *>(&len));
+
+    EVP_MD_CTX_free(ctx);
+    hash = reinterpret_cast< char const* >(md_value);
+    return 1;
+}*/
 
 int compute_hash(fs::path& path, std::string& hash){
     EVP_MD_CTX *ctx;
@@ -137,12 +182,13 @@ int sync(fs::path& directory, std::string& id){
             }
         }
     }
-    struct sync_protocol_request packet;
-    packet.client_paths = all_paths;
-    packet.id = id;
+    struct packet pack;
+    pack.packet_type = sync_request;
+    pack.id = id;
+    pack.sync_req.client_paths = all_paths;
 
 
-    for(auto& item : packet.client_paths){
+    for(auto& item : pack.sync_req.client_paths){
         std::cout << "first: " << item.first << std::endl;
         std::cout << "second: " << item.second << std::endl;
     }
@@ -154,20 +200,21 @@ int sync(fs::path& directory, std::string& id){
      * the server send to me the modified paths in a vector
      *
      * */
-    struct sync_protocol_response response;
+    struct packet response;
 
     /************************************************ Server emulation *****************************************************************************/
     std::cout << std::endl << "Sono il server. Mappa ricevuta: mando il vettore" << std::endl << std::endl;
-    response.modified_paths.emplace_back("/cygdrive/c/Users/gianl/Desktop/prova/Nuova cartella/documento.txt");
-    response.modified_paths.emplace_back("/cygdrive/c/Users/gianl/Desktop/prova/prova2.txt");
+    response.sync_res.modified_paths.emplace_back("/cygdrive/c/Users/gianl/Desktop/prova/Nuova cartella/documento.txt");
+    response.sync_res.modified_paths.emplace_back("/cygdrive/c/Users/gianl/Desktop/prova/prova2.txt");
     response.id = id;
+    response.packet_type = sync_response;
 
 
     if(response.id != id){
         std::cerr << "Error " << std::endl;
         return 0;
     }
-    for(auto &file : response.modified_paths) {
+    for(auto &file : response.sync_res.modified_paths) {
         if(!send_file(file, id)){
             return 0;
         }
@@ -178,14 +225,24 @@ int sync(fs::path& directory, std::string& id){
     return 1;
 }
 
-struct modify_request create_modify_request(std::string& id, fs::path& path, enum operation op, int i, enum type t, void* buf){
-    struct modify_request pack;
+struct packet create_modify_request(std::string& id, fs::path& path, enum operation op,  fs::file_status status, void* buf){
+
+    /*struct modify_request{
+    fs::path path;
+    operation op;
+    std::string content;
+    fs::file_status file_status;
+    };*/
+
+
+    struct packet pack;
+    pack.packet_type = modify_request;
     pack.id = id;
     std::string p = path;   //we convert std::filesystem::path to a std::string to void problems like file names with spaces
-    pack.path = fs::relative(p, folder);
-    pack.op = op;
-    pack.type = t;
-    if(buf) pack.content = reinterpret_cast<char*>(buf);
+    pack.mod.path = fs::relative(p, folder);
+    pack.mod.op = op;
+    pack.mod.file_status = status;
+    if(buf) pack.mod.content = reinterpret_cast<char*>(buf);
     return pack;
 }
 
@@ -211,8 +268,9 @@ int send_file(fs::path& path, std::string& id, operation op){
             }
             std::cout << "delete directory: " << path << std::endl;
 
-            struct modify_request pack = create_modify_request(id, path, del, 0, directory, nullptr);
-            std::cout << "path: " << pack.path << " " << "op: " << pack.op << std::endl;
+            fs::file_status status = fs::status(path);
+            struct packet pack = create_modify_request(id, path, del, status, nullptr);
+            std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
 
             //send to server
             return 1;
@@ -222,8 +280,9 @@ int send_file(fs::path& path, std::string& id, operation op){
              * send path to server
              *
              * */
-            struct modify_request pack = create_modify_request(id, path, create, 0, directory, nullptr);
-            std::cout << "path: " << pack.path << " " << "op: " << pack.op << std::endl;
+            fs::file_status status = fs::status(path);
+            struct packet pack = create_modify_request(id, path, create, status, nullptr);
+            std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
 
             //send to server
 
@@ -239,9 +298,9 @@ int send_file(fs::path& path, std::string& id, operation op){
          *
          * */
 
-
-        struct modify_request pack = create_modify_request(id, path, del, 0, file, nullptr);
-        std::cout << "path: " << pack.path << " " << "op: " << pack.op << std::endl;
+        fs::file_status status = fs::status(path);
+        struct packet pack = create_modify_request(id, path, del, status, nullptr);
+        std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
 
         //send to server
 
@@ -267,19 +326,22 @@ int send_file(fs::path& path, std::string& id, operation op){
              *
              *
              */
-            struct modify_request pack = create_modify_request(id, path, i==0? create : append, i, file, buf);
+
+            fs::file_status status = fs::status(path);
+            struct packet pack = create_modify_request(id, path, i==0? create : append, status, buf);
 
 
             //send pack to server
 
-            std::cout << "path: " << pack.path << " " << "op: " << pack.op << std::endl;
+            std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
             i++;
         }
-        struct modify_request pack = create_modify_request(id, path, end, 0, file, nullptr);
+        fs::file_status status = fs::status(path);
+        struct packet pack = create_modify_request(id, path, end, status, nullptr);
 
         // send pack to server
 
-        std::cout << "path: " << pack.path << " " << "op: " << pack.op << std::endl;
+        std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
 
         in.close();
         free(buf);
@@ -288,7 +350,74 @@ int send_file(fs::path& path, std::string& id, operation op){
 }
 
 
+void file_watcher(){
+    // Create a FileWatcher instance that will check the current folder for changes every 5 seconds
+    FileWatcher fw{folder, std::chrono::milliseconds(5000)};
 
+    // Start monitoring a folder for changes and (in case of changes)
+    // run a user provided lambda function
+    fw.start([] (std::string path_to_watch, FileStatus status) -> void {
+        // Process only regular files, all other file types are ignored
+        if(!fs::is_regular_file(fs::path(path_to_watch)) && status != FileStatus::erased) {
+            return;
+        }
+        struct pair p;
+        p.path = path_to_watch;
+        std::unique_lock<std::mutex> ul(m);
+        switch(status) {
+            case FileStatus::created:
+                //call send_file();
+                std::cout << "File created: " << std::endl;
+
+                p.status = FileStatus::created;
+                queue.push(p);
+                cv.notify_all();
+
+
+
+                //if(!send_file((fs::path&)path_to_watch, (std::string&)id)) return;
+                //std::cout << "File created: " << translate_path_to_win((fs::path&)path_to_watch) << std::endl;
+                //std::cout << "path relativo " << fs::relative(path_to_watch, folder) << std::endl;
+                // if error free socket and close process
+                // else, async
+                break;
+            case FileStatus::modified:
+                std::cout << "File modified: " << std::endl;
+
+                p.status = FileStatus::modified;
+                queue.push(p);
+                cv.notify_all();
+
+
+                //call send_file();
+                //if(!send_file((fs::path&)path_to_watch, (std::string&)id)) return;
+                //std::cout << "File modified: " << translate_path_to_win((fs::path&)path_to_watch) << std::endl;
+                //std::cout << "path relativo " << fs::relative(path_to_watch, folder) << std::endl;
+                // if error free socket and close process
+                // else, async
+                break;
+            case FileStatus::erased:
+                std::cout << "File deleted: " << std::endl;
+
+                p.status = FileStatus::erased;
+                queue.push(p);
+                cv.notify_all();
+
+
+
+
+                //if(!send_file((fs::path&)path_to_watch, (std::string&)id, del)) return;
+                //call send_file();
+                //std::cout << "File erased: " << translate_path_to_win((fs::path&)path_to_watch) << std::endl;
+                //std::cout << "path relativo " << fs::relative(path_to_watch, folder) << std::endl;
+                // if error free socket and close process
+                // else, async
+                break;
+            default:
+                std::cout << "Error! Unknown file status.\n";
+        }
+    });
+}
 
 int main(int argc, char* argv[]) {
     if(argc < 4){
@@ -301,6 +430,34 @@ int main(int argc, char* argv[]) {
 
     //socket variable init
 
+    /******************* authentication phase *************************/
+
+    struct packet auth_pack;
+    auth_pack.id = id;
+    auth_pack.packet_type = auth_request;
+    auth_pack.auth.password = password;
+
+    // invio auth_pack al server
+
+
+    //ricevo un pacchetto dal server
+    struct packet auth_res;
+    auth_res.id = id;
+    auth_res.packet_type = response;
+    auth_res.res.res = true;
+
+
+
+    if(!auth_res.res.res){
+        std::cerr << "Authentication error." << std::endl;
+        std::cerr << auth_res.res.description << std::endl;
+        std::cerr << "Shutdowning..." << std::endl;
+        return -1;
+    }
+
+
+
+
     /********** fixing path in case of windows systems **********/
     folder = translate_path_to_cyg(folder);
 
@@ -310,11 +467,6 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "Syncronizing folder " << folder << std::endl;
-
-
-    // Create a FileWatcher instance that will check the current folder for changes every 5 seconds
-    FileWatcher fw{folder, std::chrono::milliseconds(5000)};
-
 
     if(!sync(folder, id)){
         std::cerr << "Error sync" << std::endl;
@@ -326,48 +478,25 @@ int main(int argc, char* argv[]) {
     //if(!send_file(p, (std::string&)id, del)) std::cout << p << std::endl;
 
 
+    /************************** Configuring mutex*************************************/
 
+    std::unique_lock<std::mutex> ul(m);
 
+    /***************************** Creating the file watcher thread ***********************/
 
-    // Start monitoring a folder for changes and (in case of changes)
-    // run a user provided lambda function
-    fw.start([id] (std::string path_to_watch, FileStatus status) -> void {
-        // Process only regular files, all other file types are ignored
-        if(!fs::is_regular_file(fs::path(path_to_watch)) && status != FileStatus::erased) {
-            return;
-        }
+    std::thread thread(file_watcher);
+    thread_guard t_guard(thread);
 
-        switch(status) {
-            case FileStatus::created:
-                //call send_file();
-                std::cout << "File created: " << std::endl;
-                if(!send_file((fs::path&)path_to_watch, (std::string&)id)) return;
-                //std::cout << "File created: " << translate_path_to_win((fs::path&)path_to_watch) << std::endl;
-                //std::cout << "path relativo " << fs::relative(path_to_watch, folder) << std::endl;
-                // if error free socket and close process
-                // else, async
-                break;
-            case FileStatus::modified:
-                std::cout << "File modified: " << std::endl;
-                //call send_file();
-                if(!send_file((fs::path&)path_to_watch, (std::string&)id)) return;
-                //std::cout << "File modified: " << translate_path_to_win((fs::path&)path_to_watch) << std::endl;
-                //std::cout << "path relativo " << fs::relative(path_to_watch, folder) << std::endl;
-                // if error free socket and close process
-                // else, async
-                break;
-            case FileStatus::erased:
-                std::cout << "File deleted: " << std::endl;
-                if(!send_file((fs::path&)path_to_watch, (std::string&)id, del)) return;
-                //call send_file();
-                //std::cout << "File erased: " << translate_path_to_win((fs::path&)path_to_watch) << std::endl;
-                //std::cout << "path relativo " << fs::relative(path_to_watch, folder) << std::endl;
-                // if error free socket and close process
-                // else, async
-                break;
-            default:
-                std::cout << "Error! Unknown file status.\n";
-        }
-    });
+    while(true){
+        cv.wait(ul, [](){return !queue.empty();});
+        struct pair p = queue.front();
+        queue.pop();
+        cv.notify_all();
+
+        std::cout << p.path << ", " << (p.status == FileStatus::created? "created" : (p.status == FileStatus::modified? "modified" : "erased")) << std::endl;
+
+        //inviare i pacchetti con send_file();
+
+    }
 
 }
