@@ -1,20 +1,29 @@
 #include <iostream>
 #include "FileWatcher.h"
 #include "Thread_guard.cpp"
+#include "SocketGuard.cpp"
 #include <filesystem>
 #include <iostream>
 #include <fstream>
 #include <vector>
 #include <map>
 #include <openssl/evp.h>
+#include <openssl/sha.h>
 #include <string>
 #include <mutex>
 #include <condition_variable>
 #include <queue>
+#include <boost/asio.hpp>
+#include <boost/archive/text_oarchive.hpp>
+#include <boost/archive/text_iarchive.hpp>
+#include <boost/serialization/map.hpp>
+#include <boost/serialization/string.hpp>
+#include <boost/serialization/vector.hpp>
 
 
 namespace fs = std::filesystem;
 #define SIZE 1024
+#define SERVER "127.0.0.1"
 
 struct pair{
     fs::path path;
@@ -32,11 +41,22 @@ enum type {modify_request, sync_request, sync_single_file_request, sync_response
 
 struct auth_request{
     std::string password;
+
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & password;
+    }
 };
 
 struct response{
     bool res;
     std::string description;
+
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & res;
+        ar & description;
+    }
 };
 
 struct modify_request{
@@ -44,15 +64,34 @@ struct modify_request{
     operation op;
     std::string content;
     fs::file_status file_status;
+
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & path;
+        ar & op;
+        ar & content;
+        ar & file_status;
+    }
 };
 
 struct sync_request{
     std::map<fs::path, std::string> client_paths;
+
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & client_paths;
+    }
 };
 
 struct sync_response{
     std::vector<fs::path> modified_paths;
     std::string description;
+
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & modified_paths;
+        ar & description;
+    }
 };
 
 struct packet{
@@ -63,11 +102,32 @@ struct packet{
     struct response res;
     struct sync_request sync_req;
     struct sync_response sync_res;
+
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & id;
+        ar & packet_type;
+        ar & auth;
+        ar & mod;
+        ar & res;
+        ar & sync_req;
+        ar & sync_res;
+    }
 };
 
 /***************** PROTOTYPES ***********************/
-int send_file(fs::path& path, std::string& id, operation op = create);
+std::string translate_path_to_cyg(fs::path& path);
+std::string translate_path_to_win(fs::path& path);
+std::string compute_pass_hash (std::string& pass_clear);
+int compute_hash(fs::path& path, std::string& hash);
+int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx);
+struct packet create_modify_request(std::string& id, fs::path& path, enum operation op,  fs::file_status status, void* buf);
+int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, operation op = create);
+int send(struct packet & pack, socket_guard &socket);
+int receive(struct packet & pack, socket_guard &socket);
+void file_watcher();
 
+/******************** FUNCTIONS *****************************/
 
 std::string translate_path_to_cyg(fs::path& path){
     #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__) || defined(__CYGWIN__)
@@ -105,28 +165,21 @@ std::string translate_path_to_win(fs::path& path){
     return path;
 }
 
-/*int compute_hash_password(std::string& pass, std::string& hash){
-    EVP_MD_CTX *ctx;
-    unsigned char md_value[EVP_MAX_MD_SIZE];
-    unsigned char buf[SIZE];
-    int len;
+std::string compute_pass_hash (std::string& pass_clear){
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256_CTX sha256;
+    SHA256_Init(&sha256);
+    SHA256_Update(&sha256, pass_clear.c_str(), pass_clear.size());
+    SHA256_Final(hash, &sha256);
 
-    ctx = EVP_MD_CTX_new();
-    EVP_MD_CTX_init(ctx);
-    EVP_DigestInit(ctx, EVP_md5());
+    std::stringstream ss;
+    for(int i = 0; i < SHA256_DIGEST_LENGTH; i++){
+        ss << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
+    }
 
-    buf = reinterpret_cast< char const* > (pass);
-
-
-    EVP_DigestUpdate(ctx, buf, SIZE);
-
-
-    EVP_DigestFinal_ex(ctx, md_value, reinterpret_cast<unsigned int *>(&len));
-
-    EVP_MD_CTX_free(ctx);
-    hash = reinterpret_cast< char const* >(md_value);
-    return 1;
-}*/
+    std::string hashed = ss.str();
+    return hashed;
+}
 
 int compute_hash(fs::path& path, std::string& hash){
     EVP_MD_CTX *ctx;
@@ -160,7 +213,8 @@ int compute_hash(fs::path& path, std::string& hash){
     return 1;
 }
 
-int sync(fs::path& directory, std::string& id){
+int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx){
+    socket_guard socket(ctx);
     std::map<fs::path, std::string> all_paths;
 
     if(!fs::is_directory(directory)){
@@ -187,38 +241,30 @@ int sync(fs::path& directory, std::string& id){
     pack.id = id;
     pack.sync_req.client_paths = all_paths;
 
-
-    for(auto& item : pack.sync_req.client_paths){
-        std::cout << "first: " << item.first << std::endl;
-        std::cout << "second: " << item.second << std::endl;
-    }
-
-
-    /*
-     *
-     * send to server packet;
-     * the server send to me the modified paths in a vector
-     *
-     * */
-    struct packet response;
-
-    /************************************************ Server emulation *****************************************************************************/
-    std::cout << std::endl << "Sono il server. Mappa ricevuta: mando il vettore" << std::endl << std::endl;
-    response.sync_res.modified_paths.emplace_back("/cygdrive/c/Users/gianl/Desktop/prova/Nuova cartella/documento.txt");
-    response.sync_res.modified_paths.emplace_back("/cygdrive/c/Users/gianl/Desktop/prova/prova2.txt");
-    response.id = id;
-    response.packet_type = sync_response;
-
-
-    if(response.id != id){
-        std::cerr << "Error " << std::endl;
+    if(!send(pack, socket)){
+        std::cerr << "Connection error: impossible to send sync packets." << std::endl;
+        std::cerr << "Shutdowning..." << std::endl;
         return 0;
     }
+
+
+
+    struct packet response;
+    if(!receive(response, socket)){
+        std::cerr << "Connection error: impossible to receive sync packets." << std::endl;
+        std::cerr << "Shutdowning..." << std::endl;
+        return 0;
+    }
+
+    if(response.id != id){
+        std::cerr << "Error." << std::endl;
+        return 0;
+    }
+
     for(auto &file : response.sync_res.modified_paths) {
-        if(!send_file(file, id)){
+        if(!send_file(file, id, ctx)){
             return 0;
         }
-        //std::async();
     }
 
     std::cout << "synchronization succeded" << std::endl;
@@ -246,8 +292,9 @@ struct packet create_modify_request(std::string& id, fs::path& path, enum operat
     return pack;
 }
 
-int send_file(fs::path& path, std::string& id, operation op){
-    //std::cout << "leggendo il file: " << path << std::endl;
+int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, operation op){
+    socket_guard socket(ctx);
+
     if(fs::is_directory(path)){
         if(op == del){
             /*
@@ -264,45 +311,49 @@ int send_file(fs::path& path, std::string& id, operation op){
              *
              * */
             for(auto& file : fs::directory_iterator(path)){
-                if(!send_file((fs::path&)file, id, del)) return 0;
+                if(!send_file((fs::path&)file, id, ctx, del)) return 0;
             }
             std::cout << "delete directory: " << path << std::endl;
 
             fs::file_status status = fs::status(path);
             struct packet pack = create_modify_request(id, path, del, status, nullptr);
-            std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
 
             //send to server
+            if(!send(pack, socket)){
+                std::cerr << "Connection error: impossible to send modify packets." << std::endl;
+                std::cerr << "Shutdowning..." << std::endl;
+                return 0;
+            }
             return 1;
         }
         else {
-            /*
-             * send path to server
-             *
-             * */
+            // send path to server
             fs::file_status status = fs::status(path);
             struct packet pack = create_modify_request(id, path, create, status, nullptr);
-            std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
 
             //send to server
+            if(!send(pack, socket)){
+                std::cerr << "Connection error: impossible to send modify packets." << std::endl;
+                std::cerr << "Shutdowning..." << std::endl;
+                return 0;
+            }
 
             return 1;
         }
     }
     else if(op == del){
-        /*
-         *
-         * send to server the information about the deletion of the file
-         *
-         *
-         *
-         * */
+        // send to server the information about the deletion of the file
 
         fs::file_status status = fs::status(path);
         struct packet pack = create_modify_request(id, path, del, status, nullptr);
         std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
 
         //send to server
+        if(!send(pack, socket)){
+            std::cerr << "Connection error: impossible to send modify packets." << std::endl;
+            std::cerr << "Shutdowning..." << std::endl;
+            return 0;
+        }
 
         return 1;
     }
@@ -323,15 +374,17 @@ int send_file(fs::path& path, std::string& id, operation op){
              *  else server will append the existing file;
              *  we send to the server create for i == 0; append for i != 0; then, we send an end message
              *  in any case, in the message there will be the content of the file
-             *
-             *
              */
 
             fs::file_status status = fs::status(path);
             struct packet pack = create_modify_request(id, path, i==0? create : append, status, buf);
 
-
-            //send pack to server
+            //send to server
+            if(!send(pack, socket)){
+                std::cerr << "Connection error: impossible to send modify packets." << std::endl;
+                std::cerr << "Shutdowning..." << std::endl;
+                return 0;
+            }
 
             std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
             i++;
@@ -339,7 +392,12 @@ int send_file(fs::path& path, std::string& id, operation op){
         fs::file_status status = fs::status(path);
         struct packet pack = create_modify_request(id, path, end, status, nullptr);
 
-        // send pack to server
+        //send to server
+        if(!send(pack, socket)){
+            std::cerr << "Connection error: impossible to send modify packets." << std::endl;
+            std::cerr << "Shutdowning..." << std::endl;
+            return 0;
+        }
 
         std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
 
@@ -348,7 +406,6 @@ int send_file(fs::path& path, std::string& id, operation op){
         return 1;
     }
 }
-
 
 void file_watcher(){
     // Create a FileWatcher instance that will check the current folder for changes every 5 seconds
@@ -419,6 +476,64 @@ void file_watcher(){
     });
 }
 
+int send(struct packet & pack, socket_guard &socket){
+    //preparing the archive to send
+    boost::asio::streambuf buf;
+    std::ostream os(&buf);
+    boost::archive::text_oarchive ar(os);
+    ar & pack;
+
+    boost::system::error_code err;
+    socket.socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::address::from_string(SERVER), 9999),
+                          err);
+    if (err.failed()) {
+        std::cout << "Send failed." << std::endl;
+        return 0;
+    }
+
+    const size_t header = buf.size();
+
+    // send header and buffer using scatter
+    std::vector<boost::asio::const_buffer> buffers;
+    buffers.push_back(boost::asio::buffer(&header, sizeof(header)));
+    buffers.push_back(buf.data());
+
+    const size_t rc = boost::asio::write(socket, buffers);
+    std::cout << "Packet send." << std::endl;
+
+    return rc;
+}
+
+int receive(struct packet & pack, socket_guard &socket){
+    size_t header;
+    boost::system::error_code err;
+
+    boost::asio::read(socket.socket, boost::asio::buffer(&header, sizeof(header)), err);
+
+    if (err.failed()) {
+        std::cout << "Receive failed." << std::endl;
+        return 0;
+    }
+
+    // read body
+    boost::asio::streambuf buf;
+    const size_t rc = boost::asio::read(socket.socket, buf.prepare(header), err);
+
+    if (err.failed()) {
+        std::cout << "Receive failed." << std::endl;
+        return 0;
+    }
+
+    buf.commit(header);
+
+    // deserialize
+    std::istream is(&buf);
+    boost::archive::text_iarchive ar(is);
+    ar & pack;
+
+    return rc;
+}
+
 int main(int argc, char* argv[]) {
     if(argc < 4){
         std::cerr << "Error: parameters missing";
@@ -428,23 +543,38 @@ int main(int argc, char* argv[]) {
     std::string id = argv[2];
     std::string password = argv[3];
 
-    //socket variable init
+
+    boost::asio::io_context ctx;
+    socket_guard auth_socket(ctx);
 
     /******************* authentication phase *************************/
 
     struct packet auth_pack;
     auth_pack.id = id;
     auth_pack.packet_type = auth_request;
-    auth_pack.auth.password = password;
+    auth_pack.auth.password = compute_pass_hash(password);
 
-    // invio auth_pack al server
+    // send auth_pack to server
+    if(!send(auth_pack, auth_socket)){
+        std::cerr << "Connection error: impossible to send authentication packets." << std::endl;
+        std::cerr << "Shutdowning..." << std::endl;
+        return -1;
+    }
 
 
     //ricevo un pacchetto dal server
-    struct packet auth_res;
+    /*struct packet auth_res;
     auth_res.id = id;
     auth_res.packet_type = response;
-    auth_res.res.res = true;
+    auth_res.res.res = true;*/
+
+    struct packet auth_res;
+
+    if(!receive(auth_res, auth_socket)){
+        std::cerr << "Connection error: impossible to receive authentication packets." << std::endl;
+        std::cerr << "Shutdowning..." << std::endl;
+        return -1;
+    }
 
 
 
@@ -468,17 +598,14 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Syncronizing folder " << folder << std::endl;
 
-    if(!sync(folder, id)){
+    if(!sync(folder, id, ctx)){
         std::cerr << "Error sync" << std::endl;
         //free socket
         return -1;
     }
 
-    //fs::path p = "/cygdrive/c/Users/gianl/Desktop/prova/Nuova cartella/pr.txt";
-    //if(!send_file(p, (std::string&)id, del)) std::cout << p << std::endl;
 
-
-    /************************** Configuring mutex*************************************/
+    /************************** Configuring mutex *************************************/
 
     std::unique_lock<std::mutex> ul(m);
 
