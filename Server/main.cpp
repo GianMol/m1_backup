@@ -15,6 +15,7 @@
 #include <sqlite3.h>
 #include <chrono>
 #include <boost/asio.hpp>
+#include <boost/bind.hpp>
 
 
 namespace fs = std::filesystem;
@@ -73,217 +74,281 @@ struct packet{
     struct sync_response sync_res;
 };
 
-std::string compute_pass_hash (std::string pass_clear){
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
-    SHA256_Update(&sha256, pass_clear.c_str(), pass_clear.size());
-    SHA256_Final(hash, &sha256);
+using boost::asio::ip::tcp;
 
-    std::stringstream ss;
-    for(int i = 0; i < SHA256_DIGEST_LENGTH; i++){
-        ss << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
-    }
-
-    std::string hashed = ss.str();
-    return hashed;
-}
-
-
-int compute_hash(fs::path& path, std::string& hash){
-    EVP_MD_CTX *ctx;
-    unsigned char md_value[EVP_MAX_MD_SIZE];
-    unsigned char buf[SIZE];
-    int len;
-
-    ctx = EVP_MD_CTX_new();
-    EVP_MD_CTX_init(ctx);
-    EVP_DigestInit(ctx, EVP_md5());
-
-
-    std::ifstream in;
-    in.open(path, std::ios::binary);
-    if(!in.is_open()){
-        return 0;
-    }
-
-    while(!in.eof()) {
-        in.read((char *) buf, SIZE);
-        if (in.bad()) return 0;
-        else{
-            EVP_DigestUpdate(ctx, buf, SIZE);
-        }
-    }
-
-    EVP_DigestFinal_ex(ctx, md_value, reinterpret_cast<unsigned int *>(&len));
-
-    EVP_MD_CTX_free(ctx);
-    hash = reinterpret_cast< char const* >(md_value);
-    return 1;
-}
-
-struct packet manage_synch (struct packet req){
-    std::map <fs::path, std::string> current_hashs;
-    std::map <fs::path, std::string>::iterator it;
-    struct packet res;
-    std::string hash;
-    //The server checks if this paths are beign modified or not. The modified one wll be inserted into a vector
-    //Compute the hashs of all files and folders of server
-    for(auto &file : fs::recursive_directory_iterator(folder)) {
-        if(!compute_hash((fs::path &) file, hash)){
-            std::cerr << "Error" << std::endl;
-            //Error;
-        }
-        else {
-            current_hashs.insert(std::pair<fs::path, std::string>(fs::relative(file, folder), hash));
-        }
-    }
-
-    for (it=req.sync_req.client_paths.begin();it!=req.sync_req.client_paths.end();it++){
-        auto position = current_hashs.find(it->first);
-        if(position==current_hashs.end()){//Path non presente, bisogna inserirlo nel vettore
-            res.sync_res.modified_paths.push_back(it->first);
-        }
-        else{
-            if(position->second!=it->second)//Hash diversi
-                res.sync_res.modified_paths.push_back(it->first);
-        }
-    }
-
-    //Creare cartella di backup per l'utente se non già presente
-    std::ifstream ifile;
-    std::string back_folder = "/cygdrive/c/Users/Corrado/Desktop/ex/backup/"+req.id+"/";
-    fs::path destination (back_folder);
-    ifile.open(destination);
-    if(!ifile) {//The directory doesn't exist yet
-        fs::create_directory(destination);
-    }
-    return res;
-}
-
-struct packet manage_modify (struct packet req) {
-    std::string back_folder = "/cygdrive/c/Users/Corrado/Desktop/ex/backup/"+req.id+"/";//+ path relativo
-    fs::path destination (back_folder);
-    std::ifstream ifile;
-    struct packet res;
-    if(req.mod.op==create) {
-        //Create a file in the directory
-        std::ofstream fs(req.mod.path);
-        if (!fs) {
-            std::cerr << "Cannot open the output file." << std::endl;
-            //Return error
-        }
-        fs << req.mod.content;
-        fs.close();
-    }
-    else if (req.mod.op==del) {
-        //Copy the file in the temp directory if it doesn't exist yet
-        ifile.open(destination);
-        if(!ifile) {
-            fs::copy(req.mod.path, destination);
-        }
-        //Delete a file from the directory
-        if (remove(req.mod.path) != 0)
-            perror("File deletion failed");
-        else
-            std::cout << "File deleted successfully";
-    }
-    else if (req.mod.op==append) {
-        ifile.open(destination);
-        if(!ifile) {
-            fs::copy(req.mod.path, destination);
-        }
-        //Append content to a file
-        std::ofstream outfile;
-        outfile.open(req.mod.path, std::ios_base::app);
-        outfile << "Data to append";
-    }
-    else if (req.mod.op==end) {
-        //Remove temporary data
-        remove(destination);
-    }
-    return res;
-}
-
-struct packet manage_auth (struct packet req) {
-    struct packet res;
-    //Interrogare il db e vedere se l'username e la password coincidono
-    sqlite3* db;
-    sqlite3_stmt* result;
-    std::string query;
-    if(sqlite3_open("/cygdrive/c/Users/Corrado/Desktop/PDS_Project/m1_backup/Server/users.db", &db) == 0)
-    {
-        query = "SELECT Password FROM utenti WHERE ID=?";
-        std::cout<<"QUERY: "<<query<<std::endl;
-        sqlite3_prepare( db, query.c_str(), -1, &result, NULL);
-        sqlite3_bind_text(result, 1, req.id.c_str(), req.id.length(), SQLITE_TRANSIENT);
-        sqlite3_step(result);
-        std::string password_db = reinterpret_cast<const char *>(sqlite3_column_text(result, 0));
-        std::string password_user = compute_pass_hash (req.auth.password);
-        std::cout<<"password_db: "<<password_db<<std::endl;
-        std::cout<<"password_user: "<<password_user<<std::endl;
-        int out = CRYPTO_memcmp(reinterpret_cast<const void*>(&password_db), reinterpret_cast<const void*> (&password_user), SHA256_DIGEST_LENGTH); //256 is digest length
-        if(out ==0){
-            //Digests are equal
-            //Set auth_response with successfull state
-            std::cout<<"DIGEST OK"<<std::endl;
-        } else{
-            //Digests are different
-            //Set auth_response with error state
-            std::cout<<"DIGEST NON OK"<<std::endl;
-        }
-    } else{
-        //Error on executing query
-    }
-    sqlite3_finalize(result); //Clean up function
-    //sqlite3_close(db);
-    return res;
-}
-
-void execute_task(){
-    while(true){
-        std::unique_lock<std::mutex> lk(m1);
-        cv.wait(lk, [](){return !queues.empty();});
-        std::cout<<"Thread in esecuzione"<<std::endl;
-        //Se la coda non è vuota, posso estrarre il task da eseguire
-        auto socket = queues.front();
-        queues.pop();
-        cv.notify_all();
-
-        //Connettere il socket ed inizio la ricezione (req)
-        //std::queue <struct ...> front_queue;
-        //while(true) {
-        //auto received = socket.receive()
-        //front_queue.push(received);
-        //if(received.op==end)
-        //break
-        //}
-        while(!front_queue.empty()) {
-            auto front_queue2 = front_queue.front();
-            std::cout<<"ESTRAZIONE ANDATA A BUON FINE"<<std::endl;
-            if (front_queue2.packet_type == synch_request) {
-                /**************************SYNCH REQUEST****************************/
-                struct packet res_synch;
-                //res_synch = manage_synch(front_queue2);
-                //Send res to the client
-                //send(res_synch)
-            } else if (front_queue2.packet_type == auth_request) {
-                struct packet res_auth;
-                res_auth = manage_auth(front_queue2);
-                //Send res to the client
-                //send(res_auth)
-            } else if (front_queue2.packet_type == modify_request) {
-                /***************************MODIFY REQUEST*************************/
-                struct packet res_mod;
-                //res_mod = manage_modify(front_queue2);
-                //Send res to the client
-                //send(res_mod)
+/* -------------------- CONNECTION -------------------- */
+class connection : public boost::enable_shared_from_this<connection> {
+private:
+    boost::asio::ip::tcp::socket socket;
+    char str[1024] = {};
+    size_t header;
+    void execute_task(){
+        while(true){
+            std::cout<<"Thread in esecuzione"<<std::endl;
+            std::queue <struct packet> front_queue;
+            boost::asio::streambuf stream;
+            while(true) {
+                struct packet received;
+                boost::asio::read(socket, stream);
+                front_queue.push(received);
+                if(received.packet_type==end)
+                    break;
             }
-            front_queue.pop();
+            while(!front_queue.empty()) {
+                auto front_queue2 = front_queue.front();
+                std::cout<<"ESTRAZIONE ANDATA A BUON FINE"<<std::endl;
+                if (front_queue2.packet_type == sync_request) {
+                    /**************************SYNCH REQUEST****************************/
+                    struct packet res_synch;
+                    //res_synch = manage_synch(front_queue2);
+                    //Send res to the client
+                    //send(res_synch)
+                } else if (front_queue2.packet_type == auth_request) {
+                    struct packet res_auth;
+                    res_auth = manage_auth(front_queue2);
+                    //Send res to the client
+                    //send(res_auth)
+                } else if (front_queue2.packet_type == modify_request) {
+                    /***************************MODIFY REQUEST*************************/
+                    struct packet res_mod;
+                    //res_mod = manage_modify(front_queue2);
+                    //Send res to the client
+                    //send(res_mod)
+                }
+                front_queue.pop();
+            }
         }
     }
-}
+
+
+
+    std::string compute_pass_hash (std::string pass_clear){
+        unsigned char hash[SHA256_DIGEST_LENGTH];
+        SHA256_CTX sha256;
+        SHA256_Init(&sha256);
+        SHA256_Update(&sha256, pass_clear.c_str(), pass_clear.size());
+        SHA256_Final(hash, &sha256);
+
+        std::stringstream ss;
+        for(int i = 0; i < SHA256_DIGEST_LENGTH; i++){
+            ss << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
+        }
+
+        std::string hashed = ss.str();
+        return hashed;
+    }
+
+
+    int compute_hash(fs::path& path, std::string& hash){
+        EVP_MD_CTX *ctx;
+        unsigned char md_value[EVP_MAX_MD_SIZE];
+        unsigned char buf[SIZE];
+        int len;
+
+        ctx = EVP_MD_CTX_new();
+        EVP_MD_CTX_init(ctx);
+        EVP_DigestInit(ctx, EVP_md5());
+
+
+        std::ifstream in;
+        in.open(path, std::ios::binary);
+        if(!in.is_open()){
+            return 0;
+        }
+
+        while(!in.eof()) {
+            in.read((char *) buf, SIZE);
+            if (in.bad()) return 0;
+            else{
+                EVP_DigestUpdate(ctx, buf, SIZE);
+            }
+        }
+
+        EVP_DigestFinal_ex(ctx, md_value, reinterpret_cast<unsigned int *>(&len));
+
+        EVP_MD_CTX_free(ctx);
+        hash = reinterpret_cast< char const* >(md_value);
+        return 1;
+    }
+
+    struct packet manage_synch (struct packet req){
+        std::map <fs::path, std::string> current_hashs;
+        std::map <fs::path, std::string>::iterator it;
+        struct packet res;
+        std::string hash;
+        //The server checks if this paths are beign modified or not. The modified one wll be inserted into a vector
+        //Compute the hashs of all files and folders of server
+        for(auto &file : fs::recursive_directory_iterator(folder)) {
+            if(!compute_hash((fs::path &) file, hash)){
+                std::cerr << "Error" << std::endl;
+                //Error;
+            }
+            else {
+                current_hashs.insert(std::pair<fs::path, std::string>(fs::relative(file, folder), hash));
+            }
+        }
+
+        for (it=req.sync_req.client_paths.begin();it!=req.sync_req.client_paths.end();it++){
+            auto position = current_hashs.find(it->first);
+            if(position==current_hashs.end()){//Path non presente, bisogna inserirlo nel vettore
+                res.sync_res.modified_paths.push_back(it->first);
+            }
+            else{
+                if(position->second!=it->second)//Hash diversi
+                    res.sync_res.modified_paths.push_back(it->first);
+            }
+        }
+
+        //Creare cartella di backup per l'utente se non già presente
+        std::ifstream ifile;
+        std::string back_folder = "/cygdrive/c/Users/Corrado/Desktop/ex/backup/"+req.id+"/";
+        fs::path destination (back_folder);
+        ifile.open(destination);
+        if(!ifile) {//The directory doesn't exist yet
+            fs::create_directory(destination);
+        }
+        return res;
+    }
+
+    struct packet manage_modify (struct packet req) {
+        std::string back_folder = "/cygdrive/c/Users/Corrado/Desktop/ex/backup/"+req.id+"/";//+ path relativo
+        fs::path destination (back_folder);
+        std::ifstream ifile;
+        struct packet res;
+        if(req.mod.op==create) {
+            //Create a file in the directory
+            std::ofstream fs(req.mod.path);
+            if (!fs) {
+                std::cerr << "Cannot open the output file." << std::endl;
+                //Return error
+            }
+            fs << req.mod.content;
+            fs.close();
+        }
+        else if (req.mod.op==del) {
+            //Copy the file in the temp directory if it doesn't exist yet
+            ifile.open(destination);
+            if(!ifile) {
+                fs::copy(req.mod.path, destination);
+            }
+            //Delete a file from the directory
+            if (remove(req.mod.path) != 0)
+                perror("File deletion failed");
+            else
+                std::cout << "File deleted successfully";
+        }
+        else if (req.mod.op==append) {
+            ifile.open(destination);
+            if(!ifile) {
+                fs::copy(req.mod.path, destination);
+            }
+            //Append content to a file
+            std::ofstream outfile;
+            outfile.open(req.mod.path, std::ios_base::app);
+            outfile << "Data to append";
+        }
+        else if (req.mod.op==end) {
+            //Remove temporary data
+            remove(destination);
+        }
+        return res;
+    }
+
+    struct packet manage_auth (struct packet req) {
+        struct packet res;
+        //Interrogare il db e vedere se l'username e la password coincidono
+        sqlite3* db;
+        sqlite3_stmt* result;
+        std::string query;
+        if(sqlite3_open("/cygdrive/c/Users/Corrado/Desktop/PDS_Project/m1_backup/Server/users.db", &db) == 0)
+        {
+            query = "SELECT Password FROM utenti WHERE ID=?";
+            std::cout<<"QUERY: "<<query<<std::endl;
+            sqlite3_prepare( db, query.c_str(), -1, &result, NULL);
+            sqlite3_bind_text(result, 1, req.id.c_str(), req.id.length(), SQLITE_TRANSIENT);
+            sqlite3_step(result);
+            std::string password_db = reinterpret_cast<const char *>(sqlite3_column_text(result, 0));
+            std::string password_user = compute_pass_hash (req.auth.password);
+            std::cout<<"password_db: "<<password_db<<std::endl;
+            std::cout<<"password_user: "<<password_user<<std::endl;
+            int out = CRYPTO_memcmp(reinterpret_cast<const void*>(&password_db), reinterpret_cast<const void*> (&password_user), SHA256_DIGEST_LENGTH); //256 is digest length
+            if(out ==0){
+                //Digests are equal
+                //Set auth_response with successfull state
+                std::cout<<"DIGEST OK"<<std::endl;
+            } else{
+                //Digests are different
+                //Set auth_response with error state
+                std::cout<<"DIGEST NON OK"<<std::endl;
+            }
+        } else{
+            //Error on executing query
+        }
+        sqlite3_finalize(result); //Clean up function
+        //sqlite3_close(db);
+        return res;
+    }
+
+public:
+    typedef boost::shared_ptr<connection> pointer;
+    explicit connection(boost::asio::io_context& io_context) : socket(io_context) {}
+
+    void start(){
+        //socket.async_receive(boost::asio::buffer(str), boost::bind(&connection::callback, this, str));
+
+        //socket.receive(boost::asio::buffer(str));
+        //std::cout << str;
+
+        execute_task();
+        //read struct packet
+        //write struct packet
+    }
+
+    void callback(char str[]){
+        std::cout << str << std::endl;
+    }
+
+    static pointer create(boost::asio::io_context& io_context) {
+        return pointer(new connection(io_context));
+    }
+
+    tcp::socket& get_socket() {
+        return socket;
+    }
+};
+
+/* -------------------- SERVER -------------------- */
+class Server {
+public:
+
+    explicit server(boost::asio::io_context& ctx) : context(ctx) , acceptor(context, tcp::endpoint(tcp::v4(), 9999)) {
+        std::cout << "Server attivo" << std::endl;
+        start();
+    }
+
+private:
+    boost::asio::io_context& context;
+    tcp::acceptor acceptor;
+
+    void start(){
+        connection::pointer new_connection = connection::create(context);
+        acceptor.async_accept(new_connection->get_socket(), boost::bind(&Server::handle_accept, this, new_connection, boost::asio::placeholders::error));
+    }
+
+    void handle_accept(connection::pointer new_connection,  const boost::system::error_code& error){
+        if (!error) {
+            new_connection->start();
+        }
+        start();
+    }
+};
+
+
 int main() {
+
+    boost::asio::io_context io_context;
+
+    Server server (io_context);
 
     //THREAD POOL
     std::vector<std::thread> threads;
@@ -294,7 +359,7 @@ int main() {
 
     //CREATE THREADS
     for(int i=0;i<core_number-1;i++){
-        threads.push_back(std::thread(execute_task));
+        threads.push_back(std::thread(io_context.run()));
     }
 
 
@@ -334,7 +399,5 @@ int main() {
     for(int i=0;i<core_number-1;i++){
         threads[i].join();
     }
-
-    //Inserire il socket nella coda queues.insert()
-
+    
 }
