@@ -60,22 +60,22 @@ struct response{
 };
 
 struct modify_request{
-    fs::path path;
+    std::string path;
     operation op;
     std::string content;
-    fs::file_status file_status;
+    std::string permissions;
 
     template <class Archive>
     void serialize(Archive& ar, unsigned int version){
         ar & path;
         ar & op;
         ar & content;
-        ar & file_status;
+        ar & permissions;
     }
 };
 
 struct sync_request{
-    std::map<fs::path, std::string> client_paths;
+    std::map<std::string, std::string> client_paths;
 
     template <class Archive>
     void serialize(Archive& ar, unsigned int version){
@@ -84,7 +84,7 @@ struct sync_request{
 };
 
 struct sync_response{
-    std::vector<fs::path> modified_paths;
+    std::vector<std::string> modified_paths;
     std::string description;
 
     template <class Archive>
@@ -118,7 +118,8 @@ struct packet{
 /***************** PROTOTYPES ***********************/
 std::string translate_path_to_cyg(fs::path& path);
 std::string translate_path_to_win(fs::path& path);
-std::string compute_pass_hash (std::string& pass_clear);
+std::string translate_perms_to_string(fs::perms& p);
+fs::perms translate_string_to_perms(std::string& string);
 int compute_hash(fs::path& path, std::string& hash);
 int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx);
 struct packet create_modify_request(std::string& id, fs::path& path, enum operation op,  fs::file_status status, void* buf);
@@ -165,20 +166,31 @@ std::string translate_path_to_win(fs::path& path){
     return path;
 }
 
-std::string compute_pass_hash (std::string& pass_clear){
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
-    SHA256_Update(&sha256, pass_clear.c_str(), pass_clear.size());
-    SHA256_Final(hash, &sha256);
+std::string translate_perms_to_string(fs::perms& p){
+    fs::perms permissions[9] = {fs::perms::owner_read, fs::perms::owner_write, fs::perms::owner_exec,
+                                fs::perms::group_read, fs::perms::group_write, fs::perms::group_exec,
+                                fs::perms::others_read, fs::perms::others_write, fs::perms::others_exec};
 
-    std::stringstream ss;
-    for(int i = 0; i < SHA256_DIGEST_LENGTH; i++){
-        ss << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
+    std::string types[3] = {"r", "w", "x"};
+
+    std::string res = ((p & permissions[0]) != fs::perms::none ? types[0] : "-");
+
+    for(int i = 1; i < 9; i++){
+        res += ((p & permissions[i]) != fs::perms::none ? types[i%3] : "-");
     }
+    return res;
+}
 
-    std::string hashed = ss.str();
-    return hashed;
+fs::perms translate_string_to_perms(std::string& string){
+    fs::perms permissions[9] = {fs::perms::owner_read, fs::perms::owner_write, fs::perms::owner_exec,
+                                fs::perms::group_read, fs::perms::group_write, fs::perms::group_exec,
+                                fs::perms::others_read, fs::perms::others_write, fs::perms::others_exec};
+    fs::perms p = fs::perms::none;
+    int i = 0;
+    for(i; i < 9; i++){
+        if(string[i] != '-') p |= permissions[i];
+    }
+    return p;
 }
 
 int compute_hash(fs::path& path, std::string& hash){
@@ -215,7 +227,7 @@ int compute_hash(fs::path& path, std::string& hash){
 
 int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx){
     socket_guard socket(ctx);
-    std::map<fs::path, std::string> all_paths;
+    std::map<std::string, std::string> all_paths;
 
     if(!fs::is_directory(directory)){
         std::cerr << "Error: it is not a directory." << std::endl;
@@ -262,7 +274,8 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx){
     }
 
     for(auto &file : response.sync_res.modified_paths) {
-        if(!send_file(file, id, ctx)){
+        fs::path f = file;
+        if(!send_file(f, id, ctx)){
             return 0;
         }
     }
@@ -271,7 +284,7 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx){
     return 1;
 }
 
-struct packet create_modify_request(std::string& id, fs::path& path, enum operation op,  fs::file_status status, void* buf){
+struct packet create_modify_request(std::string& id, fs::path& path, enum operation op, std::string& permissions, void* buf){
 
     /*struct modify_request{
     fs::path path;
@@ -287,7 +300,7 @@ struct packet create_modify_request(std::string& id, fs::path& path, enum operat
     std::string p = path;   //we convert std::filesystem::path to a std::string to void problems like file names with spaces
     pack.mod.path = fs::relative(p, folder);
     pack.mod.op = op;
-    pack.mod.file_status = status;
+    pack.mod.permissions = permissions;
     if(buf) pack.mod.content = reinterpret_cast<char*>(buf);
     return pack;
 }
@@ -552,7 +565,7 @@ int main(int argc, char* argv[]) {
     struct packet auth_pack;
     auth_pack.id = id;
     auth_pack.packet_type = auth_request;
-    auth_pack.auth.password = compute_pass_hash(password);
+    auth_pack.auth.password = password;
 
     // send auth_pack to server
     if(!send(auth_pack, auth_socket)){
