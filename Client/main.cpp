@@ -122,7 +122,7 @@ std::string translate_perms_to_string(fs::perms& p);
 fs::perms translate_string_to_perms(std::string& string);
 int compute_hash(fs::path& path, std::string& hash);
 int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx);
-struct packet create_modify_request(std::string& id, fs::path& path, enum operation op,  fs::file_status status, void* buf);
+struct packet create_modify_request(std::string& id, fs::path& path, enum operation op,  fs::file_status& status, void* buf);
 int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, operation op = create);
 int send(struct packet & pack, socket_guard &socket);
 int receive(struct packet & pack, socket_guard &socket);
@@ -284,14 +284,7 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx){
     return 1;
 }
 
-struct packet create_modify_request(std::string& id, fs::path& path, enum operation op, std::string& permissions, void* buf){
-
-    /*struct modify_request{
-    fs::path path;
-    operation op;
-    std::string content;
-    fs::file_status file_status;
-    };*/
+struct packet create_modify_request(std::string& id, fs::path& path, enum operation op, fs::file_status& status, void* buf){
 
 
     struct packet pack;
@@ -300,6 +293,9 @@ struct packet create_modify_request(std::string& id, fs::path& path, enum operat
     std::string p = path;   //we convert std::filesystem::path to a std::string to void problems like file names with spaces
     pack.mod.path = fs::relative(p, folder);
     pack.mod.op = op;
+    //convert
+    fs::perms perms = status.permissions();
+    std::string permissions = translate_perms_to_string(perms);
     pack.mod.permissions = permissions;
     if(buf) pack.mod.content = reinterpret_cast<char*>(buf);
     return pack;
@@ -511,7 +507,7 @@ int send(struct packet & pack, socket_guard &socket){
     buffers.push_back(boost::asio::buffer(&header, sizeof(header)));
     buffers.push_back(buf.data());
 
-    const size_t rc = boost::asio::write(socket, buffers);
+    const size_t rc = boost::asio::write(socket.socket, buffers);
     std::cout << "Packet send." << std::endl;
 
     return rc;
