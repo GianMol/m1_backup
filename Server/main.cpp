@@ -82,44 +82,69 @@ private:
     boost::asio::ip::tcp::socket socket;
     char str[1024] = {};
     size_t header;
-    void execute_task(){
-        while(true){
-            std::cout<<"Thread in esecuzione"<<std::endl;
-            std::queue <struct packet> front_queue;
+
+    void execute_task() {
+        while (true) {
+            std::cout << "Thread in esecuzione" << std::endl;
+            std::queue<struct packet> front_queue;
             boost::asio::streambuf stream;
-            while(true) {
-                struct packet received;
-                boost::asio::read(socket, stream);
-                front_queue.push(received);
-                if(received.packet_type==end)
-                    break;
-            }
-            while(!front_queue.empty()) {
-                auto front_queue2 = front_queue.front();
-                std::cout<<"ESTRAZIONE ANDATA A BUON FINE"<<std::endl;
-                if (front_queue2.packet_type == sync_request) {
-                    /**************************SYNCH REQUEST****************************/
+            struct packet received;
+            boost::asio::read(socket, boost::asio::buffer(&header, sizeof(header)));
+
+            //Body is
+            boost::asio::read(socket, buf.prepare(header));
+            buf.commit(header);
+
+            //Deserializzazione
+            std::istream is(&buf);
+            boost::archive::text_iarchive ar(is);
+            ar & received;
+
+            switch (received.packet_type) {
+                /**************************SYNCH REQUEST****************************/
+                case sync_request:
                     struct packet res_synch;
-                    //res_synch = manage_synch(front_queue2);
+                    //res_synch = manage_synch(received);
                     //Send res to the client
                     //send(res_synch)
-                } else if (front_queue2.packet_type == auth_request) {
+                    break;
+                case auth_request:
                     struct packet res_auth;
-                    res_auth = manage_auth(front_queue2);
+                    //res_auth = manage_auth(received);
                     //Send res to the client
                     //send(res_auth)
-                } else if (front_queue2.packet_type == modify_request) {
-                    /***************************MODIFY REQUEST*************************/
-                    struct packet res_mod;
-                    //res_mod = manage_modify(front_queue2);
-                    //Send res to the client
-                    //send(res_mod)
-                }
-                front_queue.pop();
+                    break;
+                case modify_request:
+                    while (true) {
+                        /***************************MODIFY REQUEST*************************/
+                        boost::asio::read(socket, boost::asio::buffer(&header, sizeof(header)));
+
+                        //Body is
+                        boost::asio::read(socket, buf.prepare(header));
+                        buf.commit(header);
+
+                        //Deserializzazione
+                        std::istream is(&buf);
+                        boost::archive::text_iarchive ar(is);
+                        ar & received;
+
+                        front_queue.push(received);
+                        if (received.mod.op == end)
+                            break;
+                    }
+                    while (!front_queue.empty()) {
+                        auto front_queue2 = front_queue.front();
+                        std::cout << "ESTRAZIONE ANDATA A BUON FINE" << std::endl;
+                        struct packet res_mod;
+                        //res_mod = manage_modify(front_queue2);
+                        //Send res to the client
+                        //send(res_mod)
+                    }
+                    front_queue.pop();
             }
         }
     }
-
+}
 
 
     std::string compute_pass_hash (std::string pass_clear){
