@@ -1,5 +1,6 @@
 #include "FileWatcher.h"
 #include <filesystem>
+#include <boost/asio.hpp>
 
 namespace fs = std::filesystem;
 
