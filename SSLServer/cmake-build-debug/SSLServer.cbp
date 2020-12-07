@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6"/>
+	<Project>
+		<Option title="SSLServer"/>
+		<Option makefile_is_custom="1"/>
+		<Option compiler="gcc"/>
+		<Option virtualFolders="CMake Files\;CMake Files\..\;CMake Files\..\..\;CMake Files\..\..\..\;CMake Files\..\..\..\..\;CMake Files\..\..\..\..\..\;CMake Files\..\..\..\..\..\usr\;CMake Files\..\..\..\..\..\usr\local\;CMake Files\..\..\..\..\..\usr\local\lib\;CMake Files\..\..\..\..\..\usr\local\lib\cmake\;CMake Files\..\..\..\..\..\usr\local\lib\cmake\Boost-1.73.0\;CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_headers-1.73.0\;CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_serialization-1.73.0\;CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_system-1.73.0\;"/>
+		<Build>
+			<Target title="all">
+				<Option working_dir="/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 all"/>
+					<CompileFile command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="rebuild_cache">
+				<Option working_dir="/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 rebuild_cache"/>
+					<CompileFile command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="edit_cache">
+				<Option working_dir="/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 edit_cache"/>
+					<CompileFile command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="SSLServer">
+				<Option output="/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/SSLServer" prefix_auto="0" extension_auto="0"/>
+				<Option working_dir="/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug"/>
+				<Option object_output="./"/>
+				<Option type="1"/>
+				<Option compiler="gcc"/>
+				<Compiler>
+					<Add option="-DBOOST_ALL_NO_LIB"/>
+					<Add option="-DBOOST_SERIALIZATION_DYN_LINK"/>
+					<Add option="-DBOOST_SYSTEM_DYN_LINK"/>
+					<Add directory="/usr/local/include"/>
+					<Add directory="/opt/local/include"/>
+					<Add directory="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/../include/c++/v1"/>
+					<Add directory="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/12.0.0/include"/>
+					<Add directory="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include"/>
+					<Add directory="/System/Library/Frameworks"/>
+					<Add directory="/Library/Frameworks"/>
+				</Compiler>
+				<MakeCommands>
+					<Build command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 SSLServer"/>
+					<CompileFile command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="SSLServer/fast">
+				<Option output="/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/SSLServer" prefix_auto="0" extension_auto="0"/>
+				<Option working_dir="/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug"/>
+				<Option object_output="./"/>
+				<Option type="1"/>
+				<Option compiler="gcc"/>
+				<Compiler>
+					<Add option="-DBOOST_ALL_NO_LIB"/>
+					<Add option="-DBOOST_SERIALIZATION_DYN_LINK"/>
+					<Add option="-DBOOST_SYSTEM_DYN_LINK"/>
+					<Add directory="/usr/local/include"/>
+					<Add directory="/opt/local/include"/>
+					<Add directory="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/../include/c++/v1"/>
+					<Add directory="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/12.0.0/include"/>
+					<Add directory="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include"/>
+					<Add directory="/System/Library/Frameworks"/>
+					<Add directory="/Library/Frameworks"/>
+				</Compiler>
+				<MakeCommands>
+					<Build command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 SSLServer/fast"/>
+					<CompileFile command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/make -j8 -f &quot;/Users/damiano/Documents/Clion/SSLServer/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+		</Build>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/main.cpp">
+			<Option target="SSLServer"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/CMakeLists.txt">
+			<Option virtualFolder="CMake Files\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/BoostDetectToolset-1.73.0.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/Boost-1.73.0/BoostConfig.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\Boost-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/Boost-1.73.0/BoostConfigVersion.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\Boost-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_headers-1.73.0/boost_headers-config-version.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_headers-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_headers-1.73.0/boost_headers-config.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_headers-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_serialization-1.73.0/boost_serialization-config-version.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_serialization-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_serialization-1.73.0/boost_serialization-config.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_serialization-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_serialization-1.73.0/libboost_serialization-variant-mt-shared.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_serialization-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_serialization-1.73.0/libboost_serialization-variant-mt-static.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_serialization-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_serialization-1.73.0/libboost_serialization-variant-shared.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_serialization-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_serialization-1.73.0/libboost_serialization-variant-static.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_serialization-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_system-1.73.0/boost_system-config-version.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_system-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_system-1.73.0/boost_system-config.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_system-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_system-1.73.0/libboost_system-variant-mt-shared.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_system-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_system-1.73.0/libboost_system-variant-mt-static.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_system-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_system-1.73.0/libboost_system-variant-shared.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_system-1.73.0\"/>
+		</Unit>
+		<Unit filename="/Users/damiano/Documents/Clion/SSLServer/../../../../../usr/local/lib/cmake/boost_system-1.73.0/libboost_system-variant-static.cmake">
+			<Option virtualFolder="CMake Files\..\..\..\..\..\usr\local\lib\cmake\boost_system-1.73.0\"/>
+		</Unit>
+	</Project>
+</CodeBlocks_project_file>

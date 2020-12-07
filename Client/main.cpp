@@ -12,6 +12,8 @@ int main(int argc, char* argv[]) {
     std::string id = argv[2];
     std::string password = argv[3];
 
+    std::cout << folder << " " << id << " " << password << std::endl;
+
     std::unique_lock<std::mutex> ul(m);
 
     boost::asio::io_context ctx;
