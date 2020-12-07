@@ -1,7 +1,6 @@
 #include <iostream>
 #include "FileWatcher.h"
 #include <filesystem>
-#include <iostream>
 #include <fstream>
 #include <vector>
 #include <map>
@@ -35,33 +34,59 @@ std::condition_variable cv;
 enum operation {create, del, append, end};
 enum type {modify_request, sync_request, sync_single_file_request, sync_response, auth_request, response};
 
-struct sync_request{
-    std::map<fs::path, std::string> client_paths;
-};
+struct auth_request{
+    std::string password;
 
-struct sync_response{
-    std::vector<fs::path> modified_paths;
-    std::string description;
-};
-
-struct modify_request{
-    fs::path path;
-    operation op;
-    fs::file_status file_status;
-    std::string content;
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & password;
+    }
 };
 
 struct response{
     bool res;
     std::string description;
+
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & res;
+        ar & description;
+    }
 };
 
-struct auth_request{
-    std::string password;
+struct modify_request{
+    fs::path path;
+    operation op;
+    std::string content;
+    std::string permissions;
+
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & path;
+        ar & op;
+        ar & content;
+        ar & permissions;
+    }
 };
 
-struct auth_response{
-    int response;
+struct sync_request{
+    std::map<fs::path, std::string> client_paths;
+
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & client_paths;
+    }
+};
+
+struct sync_response{
+    std::vector<fs::path> modified_paths;
+    std::string description;
+
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & modified_paths;
+        ar & description;
+    }
 };
 
 struct packet{
@@ -72,7 +97,25 @@ struct packet{
     struct response res;
     struct sync_request sync_req;
     struct sync_response sync_res;
+
+    template <class Archive>
+    void serialize(Archive& ar, unsigned int version){
+        ar & id;
+        ar & packet_type;
+        ar & auth;
+        ar & mod;
+        ar & res;
+        ar & sync_req;
+        ar & sync_res;
+    }
+
 };
+
+struct pair{
+    fs::path path;
+    FileStatus status;
+};
+
 
 using boost::asio::ip::tcp;
 
@@ -144,9 +187,7 @@ private:
             }
         }
     }
-}
-
-
+public:
     std::string compute_pass_hash (std::string pass_clear){
         unsigned char hash[SHA256_DIGEST_LENGTH];
         SHA256_CTX sha256;
@@ -232,49 +273,66 @@ private:
         if(!ifile) {//The directory doesn't exist yet
             fs::create_directory(destination);
         }
+
+        //Creare cartella temporanea per l'utente se non già presente
+        std::string temp_folder = "/cygdrive/c/Users/Corrado/Desktop/ex/temp/"+req.id+"/";
+        fs::path destination_temp (temp_folder);
+        ifile.open(destination_temp);
+        if(!ifile) {//The directory doesn't exist yet
+            std::cout<<"Directory temp non esistente"<<std::endl;
+            fs::create_directory(destination_temp);
+        } else
+            std::cout<<"Directory temp già esistente"<<std::endl;
+
         return res;
     }
 
     struct packet manage_modify (struct packet req) {
-        std::string back_folder = "/cygdrive/c/Users/Corrado/Desktop/ex/backup/"+req.id+"/";//+ path relativo
-        fs::path destination (back_folder);
+        std::string back_folder = "/cygdrive/c/Users/Corrado/Desktop/ex/backup/"+req.id+"/";
+        std::string temp_folder = "/cygdrive/c/Users/Corrado/Desktop/ex/temp/"+req.id+"/";
+        std::string received_path = req.mod.path;
+        std::string path_to_manage = back_folder + received_path;
+        std::string path_to_temp = temp_folder + received_path;
+        fs::path current (path_to_manage);
+        fs::path temp_folder_file (path_to_temp);
         std::ifstream ifile;
         struct packet res;
         if(req.mod.op==create) {
             //Create a file in the directory
-            std::ofstream fs(req.mod.path);
+            std::ofstream fs(current);
             if (!fs) {
                 std::cerr << "Cannot open the output file." << std::endl;
                 //Return error
             }
             fs << req.mod.content;
+            std::filesystem::perms perms = translate_string_to_perms(req.mod.permissions);
+            std::filesystem::permission(&current, perms);
             fs.close();
         }
         else if (req.mod.op==del) {
-            //Copy the file in the temp directory if it doesn't exist yet
-            ifile.open(destination);
-            if(!ifile) {
-                fs::copy(req.mod.path, destination);
-            }
-            //Delete a file from the directory
-            if (remove(req.mod.path) != 0)
+            if (!std::filesystem::remove(&current))
                 perror("File deletion failed");
             else
                 std::cout << "File deleted successfully";
         }
         else if (req.mod.op==append) {
-            ifile.open(destination);
-            if(!ifile) {
-                fs::copy(req.mod.path, destination);
+            ifile.open(temp_folder_file);
+            if(!temp_folder_file){//File non ancora presente nella directory temporanea ne faccio una copia
+                std::filesystem::copy (&current, &temp_folder_file);
             }
             //Append content to a file
             std::ofstream outfile;
-            outfile.open(req.mod.path, std::ios_base::app);
-            outfile << "Data to append";
+            outfile.open(current, std::ios_base::app);
+            outfile << req.mod.content;
+            std::filesystem::perms perms = translate_string_to_perms(req.mod.permissions);
+            std::filesystem::permission(&current, perms);
         }
         else if (req.mod.op==end) {
-            //Remove temporary data
-            remove(destination);
+            //Se tutto è andato a buon fine, si può cancellare il file dalla directory temporanea
+            if (!std::filesystem::remove(&temp_folder_file))
+                perror("File deletion failed");
+            else
+                std::cout << "File deleted successfully from temp";
         }
         return res;
     }
@@ -300,11 +358,13 @@ private:
             if(out ==0){
                 //Digests are equal
                 //Set auth_response with successfull state
-                std::cout<<"DIGEST OK"<<std::endl;
+                res.res.description="Authentication ok";
+                res.res.res=true;
             } else{
                 //Digests are different
                 //Set auth_response with error state
-                std::cout<<"DIGEST NON OK"<<std::endl;
+                res.res.description="Authentication failed";
+                res.res.res=false;
             }
         } else{
             //Error on executing query
@@ -314,7 +374,33 @@ private:
         return res;
     }
 
-public:
+    std::string translate_perms_to_string(fs::perms& p){
+        const fs::perms permissions[9] = {fs::perms::owner_read, fs::perms::owner_write, fs::perms::owner_exec,
+                                          fs::perms::group_read, fs::perms::group_write, fs::perms::group_exec,
+                                          fs::perms::others_read, fs::perms::others_write, fs::perms::others_exec};
+
+        const std::string types[3] = {"r", "w", "x"};
+
+        std::string res = ((p & permissions[0]) != fs::perms::none ? types[0] : "-");
+
+        for(int i = 1; i < 9; i++){
+            res += ((p & permissions[i]) != fs::perms::none ? types[i%3] : "-");
+        }
+        return res;
+    }
+
+    fs::perms translate_string_to_perms(std::string& string){
+        const fs::perms permissions[9] = {fs::perms::owner_read, fs::perms::owner_write, fs::perms::owner_exec,
+                                          fs::perms::group_read, fs::perms::group_write, fs::perms::group_exec,
+                                          fs::perms::others_read, fs::perms::others_write, fs::perms::others_exec};
+        fs::perms p = fs::perms::none;
+        int i = 0;
+        for(i=0; i < 9; i++){
+            if(string[i] != '-') p |= permissions[i];
+        }
+        return p;
+    }
+
     typedef boost::shared_ptr<connection> pointer;
     explicit connection(boost::asio::io_context& io_context) : socket(io_context) {}
 
