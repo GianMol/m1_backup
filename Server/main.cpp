@@ -298,8 +298,8 @@ public:
         std::ifstream ifile;
         struct packet res;
         if(req.mod.op==create) {
-            //Create a file in the directory
-            std::ofstream fs(current);
+            //Create a file in the temp directory
+            std::ofstream fs(temp_folder_file);
             if (!fs) {
                 std::cerr << "Cannot open the output file." << std::endl;
                 //Return error
@@ -316,23 +316,23 @@ public:
                 std::cout << "File deleted successfully";
         }
         else if (req.mod.op==append) {
-            ifile.open(temp_folder_file);
-            if(!temp_folder_file){//File non ancora presente nella directory temporanea ne faccio una copia
-                std::filesystem::copy (&current, &temp_folder_file);
-            }
-            //Append content to a file
+            //Append content to file in the temp directory
             std::ofstream outfile;
-            outfile.open(current, std::ios_base::app);
+            outfile.open(temp_folder_file, std::ios_base::app);
             outfile << req.mod.content;
             std::filesystem::perms perms = translate_string_to_perms(req.mod.permissions);
             std::filesystem::permission(&current, perms);
         }
         else if (req.mod.op==end) {
-            //Se tutto è andato a buon fine, si può cancellare il file dalla directory temporanea
-            if (!std::filesystem::remove(&temp_folder_file))
-                perror("File deletion failed");
-            else
-                std::cout << "File deleted successfully from temp";
+            //Se tutto è andato a buon fine, si può spostare il file dalla directory temporanea a quella definitiva
+            if(!std::filesystem::copy_file(&temp_folder_file, &current))
+                perror("File copy failed");
+            else {
+                if (!std::filesystem::remove(&temp_folder_file))
+                    perror("File deletion failed");
+                else
+                    std::cout << "File deleted successfully from temp";
+            }
         }
         return res;
     }
