@@ -16,6 +16,7 @@
 #include <boost/serialization/map.hpp>
 #include <boost/serialization/string.hpp>
 #include <boost/serialization/vector.hpp>
+#include <boost/asio/ssl.hpp>
 
 /********** OPENSSL **********/
 #include <openssl/evp.h>
@@ -75,11 +76,13 @@ struct sync_request{
 
 struct sync_response{
     std::vector<std::string> modified_paths;
+    bool res;
     std::string description;
 
     template <class Archive>
     void serialize(Archive& ar, unsigned int version){
         ar & modified_paths;
+        ar & res;
         ar & description;
     }
 };

@@ -15,41 +15,29 @@ int main(int argc, char* argv[]) {
     std::unique_lock<std::mutex> ul(m);
 
     boost::asio::io_context ctx;
-    socket_guard auth_socket(ctx);
+    boost::asio::ssl::context ssl_ctx(boost::asio::ssl::context::tlsv12);
+    ssl_ctx.load_verify_file("percorso");
+    boost::asio::ip::tcp::resolver resolver(ctx);
+    auto endpoint = resolver.resolve(SERVER, PORT);
 
-    /******************* authentication phase *************************/
+
+    /*********** authentication phase ***************************/
+
     struct packet auth_pack;
     auth_pack.id = id;
     auth_pack.packet_type = auth_request;
     auth_pack.auth.password = password;
 
-    //send auth_pack to server
-    if(!send(auth_pack, auth_socket)){
-        std::cerr << "Connection error: impossible to send authentication packets." << std::endl;
-        std::cerr << "Shutdowning..." << std::endl;
+    if(!auth(auth_pack, ctx, ssl_ctx, endpoint)){
         return -1;
     }
 
-    //receive response from server
-    struct packet auth_res;
-
-    if(!receive(auth_res, auth_socket)){
-        std::cerr << "Connection error: impossible to receive authentication packets." << std::endl;
-        std::cerr << "Shutdowning..." << std::endl;
-        return -1;
-    }
-
-    if(!auth_res.res.res){
-        std::cerr << "Authentication error." << std::endl;
-        std::cerr << auth_res.res.description << std::endl;
-        std::cerr << "Shutdowning..." << std::endl;
-        return -1;
-    }
+    /*********** authentication phase ended **********************/
 
     /*********** fixing path in case of windows systems **********/
     folder = translate_path_to_cyg(folder);
 
-    /******************* synchronization phase *************************/
+    /************ synchronization phase ***************************/
     if(!fs::is_directory(folder)){
         std::cerr << "Error: the argument is not a directory. Shutdowning..." << std::endl;
         return -1;
@@ -57,10 +45,12 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Syncronizing folder " << folder << std::endl;
 
-    if(!sync(folder, id, ctx)){
+    if(!sync(folder, id, ctx, ssl_ctx, endpoint)){
         std::cerr << "Error sync" << std::endl;
         return -1;
     }
+
+    /************ synchronization phase ended *********************/
 
     /******************* monitoring phase *************************/
     std::thread thread(file_watcher);
@@ -75,7 +65,7 @@ int main(int argc, char* argv[]) {
         std::cout << p.path << ", " << (p.status == FileStatus::created? "created" : (p.status == FileStatus::modified? "modified" : "erased")) << std::endl;
 
         //send file
-        if(!send_file(p.path, id, ctx, p.status == FileStatus::erased? operation::del : operation::create)){
+        if(!send_file(p.path, id, ctx, ssl_ctx, endpoint, p.status == FileStatus::erased? operation::del : operation::create)){
             //here goes network error
             std::cout << "Error" << std::endl;
             return -1;

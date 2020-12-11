@@ -5,6 +5,7 @@
 
 #define SIZE 1024
 #define SERVER "127.0.0.1"
+#define PORT "9999"
 
 namespace fs = std::filesystem;
 
@@ -20,12 +21,14 @@ std::string translate_path_to_win(fs::path& path);
 std::string translate_perms_to_string(fs::perms& p);
 fs::perms translate_string_to_perms(std::string& string);
 int compute_hash(fs::path& path, std::string& hash);
-int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx);
+int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint);
 struct packet create_modify_request(std::string& id, fs::path& path, enum operation op,  fs::file_status& status, void* buf);
-int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, operation op = create);
+int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint, operation op = create);
 int send(struct packet & pack, socket_guard &socket);
 int receive(struct packet & pack, socket_guard &socket);
 void file_watcher();
+int auth(struct packet& auth_pack, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint);
+int process_response(struct packet& pack);
 
 /******************** FUNCTIONS *****************************/
 std::string translate_path_to_cyg(fs::path& path){
@@ -121,9 +124,22 @@ int compute_hash(fs::path& path, std::string& hash){
     return 1;
 }
 
-int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx){
-    socket_guard socket(ctx);
+int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint){
     std::map<std::string, std::string> all_paths;
+    boost::system::error_code err;
+    socket_guard socket(ctx, ssl_ctx);
+
+    boost::asio::connect(socket.socket.lowest_layer(), endpoint, err);
+
+    if (err) {
+        std::cout << "Connection failed: " << err.message() << std::endl;
+        return 0;
+    }
+    socket.socket.handshake(boost::asio::ssl::stream_base::client, err);
+    if(err){
+        std::cout << "Handshake failed: " << err.message() << std::endl;
+        return 0;
+    }
 
     if(!fs::is_directory(directory)){
         std::cerr << "Error: it is not a directory." << std::endl;
@@ -132,12 +148,12 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx){
 
     for(auto &file : fs::recursive_directory_iterator(directory)) {
         if(fs::is_directory(file)){
-            all_paths.insert(std::pair<fs::path, std::string>(fs::relative(file, directory), "0"));
+            all_paths.insert(std::pair<fs::path, std::string>(fs::relative(file, directory), reinterpret_cast<char*>('\0')));
         }
         else {
             std::string hash;
             if(!compute_hash((fs::path &) file, hash)){
-                std::cerr << "Error" << std::endl;
+                std::cerr << "Error in computing hash." << std::endl;
                 return 0;
             }
             else {
@@ -152,28 +168,33 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx){
     pack.sync_req.client_paths = all_paths;
 
     if(!send(pack, socket)){
-        std::cerr << "Connection error: impossible to send sync packets." << std::endl;
+        std::cerr << "Connection error: impossible sending sync packets." << std::endl;
         std::cerr << "Shutdowning..." << std::endl;
         return 0;
     }
-
-
 
     struct packet response;
     if(!receive(response, socket)){
-        std::cerr << "Connection error: impossible to receive sync packets." << std::endl;
+        std::cerr << "Connection error: impossible receiving sync packets." << std::endl;
         std::cerr << "Shutdowning..." << std::endl;
         return 0;
     }
+
+    socket.socket.lowest_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+    socket.socket.lowest_layer().close();
 
     if(response.id != id){
         std::cerr << "Error." << std::endl;
         return 0;
     }
+    if(!response.sync_res.res){
+        std::cerr << "Error: " << response.sync_res.description << std::endl;
+        return 0;
+    }
 
     for(auto &file : response.sync_res.modified_paths) {
         fs::path f = file;
-        if(!send_file(f, id, ctx)){
+        if(!send_file(f, id, ctx, ssl_ctx, endpoint)){
             return 0;
         }
     }
@@ -195,11 +216,25 @@ struct packet create_modify_request(std::string& id, fs::path& path, enum operat
     std::string permissions = translate_perms_to_string(perms);
     pack.mod.permissions = permissions;
     if(buf) pack.mod.content = reinterpret_cast<char*>(buf);
+    else pack.mod.content = reinterpret_cast<char*>('\0');
     return pack;
 }
 
-int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, operation op){
-    socket_guard socket(ctx);
+int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint, operation op){
+    socket_guard socket(ctx, ssl_ctx);
+    boost::system::error_code err;
+    boost::asio::connect(socket.socket.lowest_layer(), endpoint, err);
+
+    if (err) {
+        std::cout << "Connection failed: " << err.message() << std::endl;
+        return 0;
+    }
+    socket.socket.handshake(boost::asio::ssl::stream_base::client, err);
+    if(err){
+        std::cout << "Handshake failed: " << err.message() << std::endl;
+        return 0;
+    }
+
 
     if(fs::is_directory(path)){
         if(op == del){
@@ -212,7 +247,7 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, op
              * */
 
             for(auto& file : fs::directory_iterator(path)){
-                if(!send_file((fs::path&)file, id, ctx, del)) return 0;
+                if(!send_file((fs::path&)file, id, ctx, ssl_ctx, endpoint, del)) return 0;
             }
             std::cout << "delete directory: " << path << std::endl;
 
@@ -221,11 +256,17 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, op
 
             //send to server
             if(!send(pack, socket)){
-                std::cerr << "Connection error: impossible to send modify packets." << std::endl;
+                std::cerr << "Connection error: impossible sending modify packets." << std::endl;
                 std::cerr << "Shutdowning..." << std::endl;
                 return 0;
             }
-            return 1;
+
+            struct packet res;
+            if(!receive(res, socket)) {
+                std::cerr << "Receiving error." << std::endl;
+                return 0;
+            }
+            return process_response(res);
         }
         else {
             // send path to server
@@ -234,12 +275,17 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, op
 
             //send to server
             if(!send(pack, socket)){
-                std::cerr << "Connection error: impossible to send modify packets." << std::endl;
+                std::cerr << "Connection error: impossible sending modify packets." << std::endl;
                 std::cerr << "Shutdowning..." << std::endl;
                 return 0;
             }
 
-            return 1;
+            struct packet res;
+            if(!receive(res, socket)) {
+                std::cerr << "Receiving error." << std::endl;
+                return 0;
+            }
+            return process_response(res);
         }
     }
     else if(op == del){
@@ -251,12 +297,17 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, op
 
         //send to server
         if(!send(pack, socket)){
-            std::cerr << "Connection error: impossible to send modify packets." << std::endl;
+            std::cerr << "Connection error: impossible sending modify packets." << std::endl;
             std::cerr << "Shutdowning..." << std::endl;
             return 0;
         }
 
-        return 1;
+        struct packet res;
+        if(!receive(res, socket)) {
+            std::cerr << "Receiving error." << std::endl;
+            return 0;
+        }
+        return process_response(res);
     }
     else {
         std::ifstream in;
@@ -282,7 +333,7 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, op
 
             //send to server
             if(!send(pack, socket)){
-                std::cerr << "Connection error: impossible to send modify packets." << std::endl;
+                std::cerr << "Connection error: impossible sending modify packets." << std::endl;
                 std::cerr << "Shutdowning..." << std::endl;
                 return 0;
             }
@@ -295,7 +346,7 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, op
 
         //send to server
         if(!send(pack, socket)){
-            std::cerr << "Connection error: impossible to send modify packets." << std::endl;
+            std::cerr << "Connection error: impossible sending modify packets." << std::endl;
             std::cerr << "Shutdowning..." << std::endl;
             return 0;
         }
@@ -304,7 +355,13 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, op
 
         in.close();
         free(buf);
-        return 1;
+
+        struct packet res;
+        if(!receive(res, socket)) {
+            std::cerr << "Receiving error." << std::endl;
+            return 0;
+        }
+        return process_response(res);
     }
 }
 
@@ -314,14 +371,11 @@ int send(struct packet & pack, socket_guard &socket){
     std::ostream os(&buf);
     boost::archive::text_oarchive ar(os);
     ar & pack;
-
     boost::system::error_code err;
-    socket.socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::address::from_string(SERVER), 9999),
+
+    /*socket.socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::address::from_string(SERVER), 9999),
                           err);
-    if (err.failed()) {
-        std::cout << "Send failed." << std::endl;
-        return 0;
-    }
+                          */
 
     const size_t header = buf.size();
 
@@ -330,7 +384,11 @@ int send(struct packet & pack, socket_guard &socket){
     buffers.push_back(boost::asio::buffer(&header, sizeof(header)));
     buffers.push_back(buf.data());
 
-    const size_t rc = boost::asio::write(socket.socket, buffers);
+    const size_t rc = boost::asio::write(socket.socket, buffers, err);
+    if (err) {
+        std::cout << "Send failed: " << err.message() << std::endl;
+        return 0;
+    }
     std::cout << "Packet send." << std::endl;
 
     return rc;
@@ -342,7 +400,7 @@ int receive(struct packet & pack, socket_guard &socket){
 
     boost::asio::read(socket.socket, boost::asio::buffer(&header, sizeof(header)), err);
 
-    if (err.failed()) {
+    if (err) {
         std::cout << "Receive failed." << std::endl;
         return 0;
     }
@@ -351,7 +409,7 @@ int receive(struct packet & pack, socket_guard &socket){
     boost::asio::streambuf buf;
     const size_t rc = boost::asio::read(socket.socket, buf.prepare(header), err);
 
-    if (err.failed()) {
+    if (err) {
         std::cout << "Receive failed." << std::endl;
         return 0;
     }
@@ -416,4 +474,45 @@ void file_watcher(){
                 std::cout << "Error! Unknown file status.\n";
         }
     });
+}
+
+
+int auth(struct packet& auth_pack, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint){
+    socket_guard auth_socket(ctx, ssl_ctx);
+    boost::system::error_code err;
+
+    boost::asio::connect(auth_socket.socket.lowest_layer(), endpoint, err);
+
+    if (err) {
+        std::cout << "Auth connection failed: " << err.message() << std::endl;
+        return 0;
+    }
+    auth_socket.socket.handshake(boost::asio::ssl::stream_base::client, err);
+    if(err){
+        std::cout << "Auth handshake failed: " << err.message() << std::endl;
+        return 0;
+    }
+
+    //send auth_pack to server
+    if(!send(auth_pack, auth_socket)){
+        std::cerr << "Connection error: impossible sending authentication packets." << std::endl;
+        std::cerr << "Shutdowning..." << std::endl;
+        return 0;
+    }
+
+    //receive response from server
+    struct packet auth_res;
+
+    if(!receive(auth_res, auth_socket)){
+        std::cerr << "Connection error: impossible receiving authentication packets." << std::endl;
+        std::cerr << "Shutdowning..." << std::endl;
+        return 0;
+    }
+
+    return process_response(auth_res);
+}
+
+int process_response(struct packet& pack){
+    std::cout << pack.res.description << std::endl;
+    return pack.res.res;
 }
