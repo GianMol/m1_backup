@@ -13,20 +13,28 @@
 #include <queue>
 #include <sqlite3.h>
 #include <chrono>
+
 #include <boost/asio.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/bind.hpp>
+#include <boost/shared_ptr.hpp>
+#include <boost/enable_shared_from_this.hpp>
+
+#include <boost/archive/text_iarchive.hpp>
+#include <boost/serialization/map.hpp>
+#include <boost/serialization/string.hpp>
+#include <boost/serialization/vector.hpp>
 
 
 namespace fs = std::filesystem;
 #define SIZE 1024
 
 //global variable socket
-fs::path folder = "/cygdrive/c/Users/Corrado/Desktop/ex"; //it is a global variable in order to get the subdirectories and files relative path
 fs::path backup = "/cygdrive/c/Users/Corrado/Desktop/ex/backup";
 std::string id ="10";
 
 //TASK TO EXECUTE
-std::queue<std::queue <struct auth_request>> tasks;
+//std::queue<std::queue <struct auth_request>> tasks;
 std::queue<boost::asio::ip::tcp::socket> queues; //Coda di socket
 
 std::mutex m1;
@@ -55,7 +63,7 @@ struct response{
 };
 
 struct modify_request{
-    fs::path path;
+    std::string path;
     operation op;
     std::string content;
     std::string permissions;
@@ -70,7 +78,7 @@ struct modify_request{
 };
 
 struct sync_request{
-    std::map<fs::path, std::string> client_paths;
+    std::map<std::string, std::string> client_paths;
 
     template <class Archive>
     void serialize(Archive& ar, unsigned int version){
@@ -79,12 +87,14 @@ struct sync_request{
 };
 
 struct sync_response{
-    std::vector<fs::path> modified_paths;
+    std::vector<std::string> modified_paths;
+    bool res;
     std::string description;
 
     template <class Archive>
     void serialize(Archive& ar, unsigned int version){
         ar & modified_paths;
+        ar & res;
         ar & description;
     }
 };
@@ -119,12 +129,33 @@ struct pair{
 
 using boost::asio::ip::tcp;
 
-/* -------------------- CONNECTION -------------------- */
-class connection : public boost::enable_shared_from_this<connection> {
+/* -------------------- SESSION -------------------- */
+class session : public std::enable_shared_from_this<session> {
+public:
+    session(tcp::socket sock, boost::asio::ssl::context& ssl_context)
+            : socket(std::move(sock), ssl_context) {}
+
+    void start(){
+        handshake();
+    }
+
 private:
-    boost::asio::ip::tcp::socket socket;
-    char str[1024] = {};
+    boost::asio::ssl::stream<tcp::socket> socket;
+    char data_[1024];
     size_t header;
+
+    void handshake(){
+        auto self(shared_from_this());
+        boost::system::error_code error;
+        socket.handshake(boost::asio::ssl::stream_base::server, error);
+
+        if(!error){
+            execute_task();
+        }
+        else {
+            std::cout << "Handshake failed: " << error.message() << "\n";
+        }
+    }
 
     void execute_task() {
         while (true) {
@@ -135,44 +166,46 @@ private:
             boost::asio::read(socket, boost::asio::buffer(&header, sizeof(header)));
 
             //Body is
-            boost::asio::read(socket, buf.prepare(header));
-            buf.commit(header);
+            boost::asio::read(socket, stream.prepare(header));
+            stream.commit(header);
 
             //Deserializzazione
-            std::istream is(&buf);
+            std::istream is(&stream);
             boost::archive::text_iarchive ar(is);
             ar & received;
 
             switch (received.packet_type) {
                 /**************************SYNCH REQUEST****************************/
-                case sync_request:
+                case type::sync_request: {
                     struct packet res_synch;
                     //res_synch = manage_synch(received);
                     //Send res to the client
                     //send(res_synch)
                     break;
-                case auth_request:
+                }
+                case type::auth_request: {
                     struct packet res_auth;
                     //res_auth = manage_auth(received);
                     //Send res to the client
                     //send(res_auth)
                     break;
-                case modify_request:
+                }
+                case type::modify_request: {
                     while (true) {
                         /***************************MODIFY REQUEST*************************/
                         boost::asio::read(socket, boost::asio::buffer(&header, sizeof(header)));
 
                         //Body is
-                        boost::asio::read(socket, buf.prepare(header));
-                        buf.commit(header);
+                        boost::asio::read(socket, stream.prepare(header));
+                        stream.commit(header);
 
                         //Deserializzazione
-                        std::istream is(&buf);
+                        std::istream is(&stream);
                         boost::archive::text_iarchive ar(is);
                         ar & received;
 
                         front_queue.push(received);
-                        if (received.mod.op == end)
+                        if (received.mod.op == end || received.mod.content==reinterpret_cast<char*>('\0'))
                             break;
                     }
                     while (!front_queue.empty()) {
@@ -184,10 +217,11 @@ private:
                         //send(res_mod)
                     }
                     front_queue.pop();
+                }
             }
         }
     }
-public:
+
     std::string compute_pass_hash (std::string pass_clear){
         unsigned char hash[SHA256_DIGEST_LENGTH];
         SHA256_CTX sha256;
@@ -238,23 +272,41 @@ public:
     }
 
     struct packet manage_synch (struct packet req){
-        std::map <fs::path, std::string> current_hashs;
-        std::map <fs::path, std::string>::iterator it;
+        std::map <std::string, std::string> current_hashs;
+        std::map <std::string, std::string>::iterator it;
+        std::map <std::string, std::string> path_to_check;
+        std::string aux;
+        //Bisogna operare con i path assoluti e non con quelli relativi
         struct packet res;
         std::string hash;
+        std::string string_folder = backup.string() + req.id + "/";
+        fs::path folder = string_folder;
+        if(!fs::exists(folder)) {
+            res.sync_res.res = false;
+            res.sync_res.description = "Error: directory doesn't exist";
+            return res;
+        }
         //The server checks if this paths are beign modified or not. The modified one wll be inserted into a vector
         //Compute the hashs of all files and folders of server
         for(auto &file : fs::recursive_directory_iterator(folder)) {
             if(!compute_hash((fs::path &) file, hash)){
                 std::cerr << "Error" << std::endl;
-                //Error;
+                res.sync_res.res = false;
+                res.sync_res.description = "Error: hash failed";
+                return res;
             }
             else {
-                current_hashs.insert(std::pair<fs::path, std::string>(fs::relative(file, folder), hash));
+                current_hashs.insert(std::pair<std::string, std::string>(fs::relative(file, folder).string(), hash));
             }
         }
 
-        for (it=req.sync_req.client_paths.begin();it!=req.sync_req.client_paths.end();it++){
+        //Costruisco i path assoluti partendo da quelli relativi ricevti
+        for(it=req.sync_req.client_paths.begin();it!=req.sync_req.client_paths.end();it++){
+            aux=string_folder + it->first;
+            path_to_check.insert(std::pair<std::string, std::string>(aux, it->second));
+        }
+
+        for (it=path_to_check.begin();it!=path_to_check.end();it++){
             auto position = current_hashs.find(it->first);
             if(position==current_hashs.end()){//Path non presente, bisogna inserirlo nel vettore
                 res.sync_res.modified_paths.push_back(it->first);
@@ -264,26 +316,7 @@ public:
                     res.sync_res.modified_paths.push_back(it->first);
             }
         }
-
-        //Creare cartella di backup per l'utente se non già presente
-        std::ifstream ifile;
-        std::string back_folder = "/cygdrive/c/Users/Corrado/Desktop/ex/backup/"+req.id+"/";
-        fs::path destination (back_folder);
-        ifile.open(destination);
-        if(!ifile) {//The directory doesn't exist yet
-            fs::create_directory(destination);
-        }
-
-        //Creare cartella temporanea per l'utente se non già presente
-        std::string temp_folder = "/cygdrive/c/Users/Corrado/Desktop/ex/temp/"+req.id+"/";
-        fs::path destination_temp (temp_folder);
-        ifile.open(destination_temp);
-        if(!ifile) {//The directory doesn't exist yet
-            std::cout<<"Directory temp non esistente"<<std::endl;
-            fs::create_directory(destination_temp);
-        } else
-            std::cout<<"Directory temp già esistente"<<std::endl;
-
+        res.sync_res.res=true;
         return res;
     }
 
@@ -297,23 +330,28 @@ public:
         fs::path temp_folder_file (path_to_temp);
         std::ifstream ifile;
         struct packet res;
-        if(req.mod.op==create) {
+        if(req.mod.op==operation::create) {
             //Create a file in the temp directory
             std::ofstream fs(temp_folder_file);
             if (!fs) {
                 std::cerr << "Cannot open the output file." << std::endl;
                 //Return error
             }
-            fs << req.mod.content;
+            if(req.mod.content==reinterpret_cast<char*>('\0'))//Creazione di file
+                fs << req.mod.content;
             std::filesystem::perms perms = translate_string_to_perms(req.mod.permissions);
-            std::filesystem::permission(&current, perms);
+            std::filesystem::permissions(current, perms);
             fs.close();
         }
         else if (req.mod.op==del) {
-            if (!std::filesystem::remove(&current))
-                perror("File deletion failed");
-            else
-                std::cout << "File deleted successfully";
+            if(!std::filesystem::copy_file(temp_folder_file, current))
+                perror("File copy failed");
+            else {
+                if (!std::filesystem::remove(current))
+                    perror("File deletion failed");
+                else
+                    std::cout << "File deleted successfully";
+            }
         }
         else if (req.mod.op==append) {
             //Append content to file in the temp directory
@@ -321,14 +359,14 @@ public:
             outfile.open(temp_folder_file, std::ios_base::app);
             outfile << req.mod.content;
             std::filesystem::perms perms = translate_string_to_perms(req.mod.permissions);
-            std::filesystem::permission(&current, perms);
+            std::filesystem::permissions(current, perms);
         }
         else if (req.mod.op==end) {
             //Se tutto è andato a buon fine, si può spostare il file dalla directory temporanea a quella definitiva
-            if(!std::filesystem::copy_file(&temp_folder_file, &current))
+            if(!std::filesystem::copy_file(temp_folder_file, current))
                 perror("File copy failed");
             else {
-                if (!std::filesystem::remove(&temp_folder_file))
+                if (!std::filesystem::remove(temp_folder_file))
                     perror("File deletion failed");
                 else
                     std::cout << "File deleted successfully from temp";
@@ -401,56 +439,43 @@ public:
         return p;
     }
 
-    typedef boost::shared_ptr<connection> pointer;
-    explicit connection(boost::asio::io_context& io_context) : socket(io_context) {}
-
-    void start(){
-        //socket.async_receive(boost::asio::buffer(str), boost::bind(&connection::callback, this, str));
-
-        //socket.receive(boost::asio::buffer(str));
-        //std::cout << str;
-
-        execute_task();
-        //read struct packet
-        //write struct packet
-    }
-
     void callback(char str[]){
         std::cout << str << std::endl;
     }
-
-    static pointer create(boost::asio::io_context& io_context) {
-        return pointer(new connection(io_context));
-    }
-
-    tcp::socket& get_socket() {
-        return socket;
-    }
 };
 
-/* -------------------- SERVER -------------------- */
-class Server {
+class Server{
 public:
+    Server(boost::asio::io_context& io_context) : acceptor(io_context, tcp::endpoint(tcp::v4(), 9999)),
+                                                  ssl_context(boost::asio::ssl::context::tlsv12){
 
-    explicit server(boost::asio::io_context& ctx) : context(ctx) , acceptor(context, tcp::endpoint(tcp::v4(), 9999)) {
-        std::cout << "Server attivo" << std::endl;
-        start();
+        ssl_context.set_options(boost::asio::ssl::context::default_workarounds
+                                | boost::asio::ssl::context::no_sslv2
+                                | boost::asio::ssl::context::single_dh_use);
+
+        ssl_context.set_password_callback(std::bind(&Server::get_password, this));
+        ssl_context.use_certificate_chain_file("/Users/damiano/Documents/Clion/SSLServer/myCA.pem");
+        ssl_context.use_private_key_file("/Users/damiano/Documents/Clion/SSLServer/myCa.key", boost::asio::ssl::context::pem);
+        ssl_context.use_tmp_dh_file("/Users/damiano/Documents/Clion/SSLServer/dh2048.pem");
+
+        accept();
     }
 
 private:
-    boost::asio::io_context& context;
     tcp::acceptor acceptor;
+    boost::asio::ssl::context ssl_context;
 
-    void start(){
-        connection::pointer new_connection = connection::create(context);
-        acceptor.async_accept(new_connection->get_socket(), boost::bind(&Server::handle_accept, this, new_connection, boost::asio::placeholders::error));
+    std::string get_password() const {
+        return "Ciaociao";
     }
 
-    void handle_accept(connection::pointer new_connection,  const boost::system::error_code& error){
-        if (!error) {
-            new_connection->start();
-        }
-        start();
+    void accept(){
+        acceptor.async_accept([this](const boost::system::error_code& error, tcp::socket socket){
+            if(!error) {
+                std::make_shared<session>(std::move(socket), ssl_context)->start();
+                accept();
+            }
+        });
     }
 };
 
@@ -470,7 +495,7 @@ int main() {
 
     //CREATE THREADS
     for(int i=0;i<core_number-1;i++){
-        threads.push_back(std::thread(io_context.run()));
+        threads.push_back(std::thread([&io_context](){io_context.run();}));
     }
 
 
