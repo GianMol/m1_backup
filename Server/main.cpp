@@ -157,6 +157,23 @@ private:
         }
     }
 
+    void send (struct packet pack){
+        boost::asio::streambuf stream;
+        std::istream os(&stream);
+        boost::archive::text_iarchive ar(os);
+        boost::system::error_code err;
+        ar & pack;
+        // send header and buffer using scatter
+        std::vector<boost::asio::const_buffer> buffers;
+        buffers.push_back(boost::asio::buffer(&header, sizeof(header)));
+        buffers.push_back(stream.data());
+        boost::asio::write(socket, stream.data(), err);
+        if (!err) {//OK
+            std::cout << "Write OK: " << "\n";
+        } else {//Failed
+            std::cout << "Write failed: " << err.message() << "\n";
+        };
+    }
     void execute_task() {
         while (true) {
             std::cout << "Thread in esecuzione" << std::endl;
@@ -178,16 +195,16 @@ private:
                 /**************************SYNCH REQUEST****************************/
                 case type::sync_request: {
                     struct packet res_synch;
-                    //res_synch = manage_synch(received);
+                    res_synch = manage_synch(received);
                     //Send res to the client
-                    //send(res_synch)
+                    send(res_synch);
                     break;
                 }
                 case type::auth_request: {
                     struct packet res_auth;
-                    //res_auth = manage_auth(received);
+                    res_auth = manage_auth(received);
                     //Send res to the client
-                    //send(res_auth)
+                    send(res_auth);
                     break;
                 }
                 case type::modify_request: {
@@ -212,9 +229,9 @@ private:
                         auto front_queue2 = front_queue.front();
                         std::cout << "ESTRAZIONE ANDATA A BUON FINE" << std::endl;
                         struct packet res_mod;
-                        //res_mod = manage_modify(front_queue2);
+                        res_mod = manage_modify(front_queue2);
                         //Send res to the client
-                        //send(res_mod)
+                        send(res_mod);
                     }
                     front_queue.pop();
                 }
