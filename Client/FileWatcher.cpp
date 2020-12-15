@@ -1,8 +1,8 @@
 #include "FileWatcher.h"
 #include <filesystem>
+#include <boost/asio.hpp>
 
 namespace fs = std::filesystem;
-
 
 FileWatcher::FileWatcher(std::string path_to_watch, std::chrono::duration<int, std::milli> delay) : path_to_watch{path_to_watch}, delay{delay} {
     for(auto &file : fs::recursive_directory_iterator(path_to_watch)) {
