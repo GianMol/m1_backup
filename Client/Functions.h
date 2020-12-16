@@ -439,17 +439,24 @@ int receive(struct packet & pack, socket_guard &socket){
 }
 
 void file_watcher(){
-    FileWatcher fw{folder, std::chrono::milliseconds(5000)};
+    FileWatcher fw{folder, std::chrono::milliseconds(1)};
 
-    fw.start([] (std::string path_to_watch, FileStatus status) -> void {
-
-        if(!fs::is_regular_file(fs::path(path_to_watch)) && status != FileStatus::erased) {
-            return;
-        }
-
+    fw.start([] (std::string& path_to_watch, FileStatus status) -> void {
         struct pair p;
         p.path = path_to_watch;
         std::unique_lock<std::mutex> ul(m);
+
+        if(!fs::is_regular_file(fs::path(path_to_watch)) && status != FileStatus::erased) {
+            if(fs::is_directory(path_to_watch) && status == FileStatus::created) {
+                std::cout << "File created: " << std::endl;
+                p.status = FileStatus::created;
+                queue.push(p);
+                cv.notify_all();
+            }
+            return;
+        }
+
+
 
         switch(status) {
             case FileStatus::created:

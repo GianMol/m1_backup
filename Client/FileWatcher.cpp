@@ -15,7 +15,7 @@ bool FileWatcher:: contains(const std::string &key) {
     return el != paths_.end();
 }
 
-void FileWatcher:: start(const std::function<void (std::string, FileStatus)> &action) {
+void FileWatcher:: start(const std::function<void (std::string&, FileStatus)> &action) {
     while(running_) {
         // Wait for "delay" milliseconds
         std::this_thread::sleep_for(delay);
@@ -23,7 +23,7 @@ void FileWatcher:: start(const std::function<void (std::string, FileStatus)> &ac
         auto it = paths_.begin();
         while (it != paths_.end()) {
             if (!fs::exists(it->first)) {
-                action(it->first, FileStatus::erased);
+                action((std::string&)it->first, FileStatus::erased);
                 it = paths_.erase(it);
             }
             else {
@@ -34,15 +34,16 @@ void FileWatcher:: start(const std::function<void (std::string, FileStatus)> &ac
         // Check if a file was created or modified
         for(auto &file : fs::recursive_directory_iterator(path_to_watch)) {
             auto current_file_last_write_time = fs::last_write_time(file);
+            std::string path = (fs::path) file;
             // File creation
             if(!contains(file.path().string())) {
-                paths_[file.path().string()] = current_file_last_write_time;
-                action(file.path().string(), FileStatus::created);
+                paths_[path] = current_file_last_write_time;
+                action(path, FileStatus::created);
                 // File modification
             } else {
-                if(paths_[file.path().string()] != current_file_last_write_time) {
-                    paths_[file.path().string()] = current_file_last_write_time;
-                    action(file.path().string(), FileStatus::modified);
+                if(paths_[path] != current_file_last_write_time) {
+                    paths_[path] = current_file_last_write_time;
+                    action(path, FileStatus::modified);
                 }
             }
         }

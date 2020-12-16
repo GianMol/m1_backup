@@ -337,14 +337,16 @@ private:
     }
 
     void manage_modify (struct packet& req, struct packet& res) {
+        std::string received_path = req.mod.path;
+        std::string relative_path = received_path.substr(received_path.find_last_of('/') + 1, received_path.length());
         std::string back_folder = "/Users/damiano/Desktop/Backup/backup/"+req.id+"/";
         std::string temp_folder = "/Users/damiano/Desktop/Backup/temp/"+req.id+"/";
-        std::string received_path = req.mod.path;
         std::string path_to_manage = back_folder + received_path;
-        std::string path_to_temp = temp_folder + received_path;
+        std::string path_to_temp = temp_folder + relative_path;
         fs::path current (path_to_manage);
         fs::path temp_folder_file (path_to_temp);
         std::ifstream ifile;
+
 
         if(req.mod.op==operation::create) {
             //Create a file in the temp directory
@@ -373,10 +375,12 @@ private:
 
                 if(req.mod.content!="\0") {//Creazione di file
                     fs << req.mod.content;
-                    std::filesystem::remove(temp_folder_file);
                 }
 
                 fs.close();
+                if(fs::exists(temp_folder_file)) {
+                    std::filesystem::remove(temp_folder_file);
+                }
             }
 
             std::filesystem::perms perms = translate_string_to_perms(req.mod.permissions);
@@ -385,6 +389,32 @@ private:
             res.res.description = "SUCAAAAAA!";
         }
         else if (req.mod.op==del) {
+            if (fs::is_directory(current)){
+                if (fs::exists(current)) {
+                    std::error_code err;
+                    std::filesystem::copy(current, temp_folder_file, err);
+                    if (err) {
+                        perror("File copy failed");
+                        res.res.res = false;
+                        res.res.description = "File Deletion Error!";
+                    } else {
+                        if (!std::filesystem::remove(current)) {
+                            perror("File deletion failed");
+                            res.res.res = false;
+                            res.res.description = "File Deletion Error!";
+                        } else {
+                            std::cout << "File deleted successfully" << std::endl;
+                            res.res.res = true;
+                            res.res.description = "SUCAAAA";
+                        }
+                    }
+                }
+                else {
+                    std::cout << "File deleted successfully";
+                    res.res.res = true;
+                    res.res.description = "SUCAAAA";
+                }
+            }
             if (fs::exists(current)) {
                 if (!std::filesystem::copy_file(current, temp_folder_file)) {
                     perror("File copy failed");
@@ -396,7 +426,7 @@ private:
                         res.res.res = false;
                         res.res.description = "File Deletion Error!";
                     } else {
-                        std::cout << "File deleted successfully";
+                        std::cout << "File deleted successfully" << std::endl;
                         res.res.res = true;
                         res.res.description = "SUCAAAA";
                     }
