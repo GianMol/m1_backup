@@ -281,49 +281,18 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
         return 0;
     }
 
-    if(fs::is_directory(path)){
-        if(op == del){
-            for(auto& file : fs::directory_iterator(path)){
-                if(!send_file((fs::path&)file, id, ctx, ssl_ctx, endpoint, del)) return 0;
-            }
-            std::cout << "delete directory: " << path << std::endl;
+    fs::file_status stat = fs::status(path);
+    if(op == create && fs::is_directory(path)){
+        // send path to server
+        fs::file_status status = fs::status(path);
+        path += "/";
+        struct packet pack = create_modify_request(id, path, create, status, (std::string&)"\0");
 
-            fs::file_status status = fs::status(path);
-            struct packet pack = create_modify_request(id, path, del, status, (std::string&)"\0");
-
-            //send to server
-            if(!send(pack, socket)){
-                std::cerr << "Connection error: impossible sending modify packets." << std::endl;
-                std::cerr << "Shutdowning..." << std::endl;
-                return 0;
-            }
-
-            struct packet res;
-            if(!receive(res, socket)) {
-                std::cerr << "Receiving error." << std::endl;
-                return 0;
-            }
-            return process_response(res);
-        }
-        else {
-            // send path to server
-            fs::file_status status = fs::status(path);
-            path += "/";
-            struct packet pack = create_modify_request(id, path, create, status, (std::string&)"\0");
-
-            //send to server
-            if(!send(pack, socket)){
-                std::cerr << "Connection error: impossible sending modify packets." << std::endl;
-                std::cerr << "Shutdowning..." << std::endl;
-                return 0;
-            }
-
-            struct packet res;
-            if(!receive(res, socket)) {
-                std::cerr << "Receiving error." << std::endl;
-                return 0;
-            }
-            return process_response(res);
+        //send to server
+        if(!send(pack, socket)){
+            std::cerr << "Connection error: impossible sending modify packets." << std::endl;
+            std::cerr << "Shutdowning..." << std::endl;
+            return 0;
         }
     }
     else if(op == del){
@@ -339,13 +308,6 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
             std::cerr << "Shutdowning..." << std::endl;
             return 0;
         }
-
-        struct packet res;
-        if(!receive(res, socket)) {
-            std::cerr << "Receiving error." << std::endl;
-            return 0;
-        }
-        return process_response(res);
     }
     else {
         std::ifstream in;
@@ -368,16 +330,15 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
             std::cerr << "Shutdowning..." << std::endl;
             return 0;
         }
-
         in.close();
-
-        struct packet res;
-        if(!receive(res, socket)) {
-            std::cerr << "Receiving error." << std::endl;
-            return 0;
-        }
-        return process_response(res);
     }
+
+    struct packet res;
+    if(!receive(res, socket)) {
+        std::cerr << "Receiving error." << std::endl;
+        return 0;
+    }
+    return process_response(res);
 }
 
 int send(struct packet & pack, socket_guard &socket){
@@ -439,7 +400,7 @@ int receive(struct packet & pack, socket_guard &socket){
 }
 
 void file_watcher(){
-    FileWatcher fw{folder, std::chrono::milliseconds(1)};
+    FileWatcher fw{folder, std::chrono::milliseconds(5000)};
 
     fw.start([] (std::string& path_to_watch, FileStatus status) -> void {
         struct pair p;

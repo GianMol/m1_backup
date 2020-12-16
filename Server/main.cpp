@@ -398,11 +398,12 @@ private:
                         res.res.res = false;
                         res.res.description = "File Deletion Error!";
                     } else {
-                        if (!std::filesystem::remove(current)) {
+                        if (!std::filesystem::remove_all(current)) {
                             perror("File deletion failed");
                             res.res.res = false;
                             res.res.description = "File Deletion Error!";
                         } else {
+                            std::filesystem::remove_all(temp_folder_file);
                             std::cout << "File deleted successfully" << std::endl;
                             res.res.res = true;
                             res.res.description = "SUCAAAA";
@@ -410,12 +411,12 @@ private:
                     }
                 }
                 else {
-                    std::cout << "File deleted successfully";
+                    std::cout << "File deleted successfully" << std::endl;
                     res.res.res = true;
                     res.res.description = "SUCAAAA";
                 }
             }
-            if (fs::exists(current)) {
+            if (fs::exists(path_to_manage)) {
                 if (!std::filesystem::copy_file(current, temp_folder_file)) {
                     perror("File copy failed");
                     res.res.res = false;
@@ -426,6 +427,7 @@ private:
                         res.res.res = false;
                         res.res.description = "File Deletion Error!";
                     } else {
+                        std::filesystem::remove(temp_folder_file);
                         std::cout << "File deleted successfully" << std::endl;
                         res.res.res = true;
                         res.res.description = "SUCAAAA";
@@ -433,7 +435,7 @@ private:
                 }
             }
             else {
-                std::cout << "File deleted successfully";
+                std::cout << "File deleted successfully" << std::endl;
                 res.res.res = true;
                 res.res.description = "SUCAAAA";
             }
