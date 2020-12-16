@@ -16,7 +16,7 @@ int main(int argc, char* argv[]) {
 
     boost::asio::io_context ctx;
     boost::asio::ssl::context ssl_ctx(boost::asio::ssl::context::tlsv12);
-    ssl_ctx.load_verify_file("/Users/damiano/Documents/Clion/CorradoServer/myCA.pem");
+    ssl_ctx.load_verify_file("/Users/damiano/Documents/GitHub/m1_backup/Client/myCA.pem");
     boost::asio::ip::tcp::resolver resolver(ctx);
     auto endpoint = resolver.resolve(SERVER, PORT);
 

@@ -27,7 +27,7 @@
 
 namespace fs = std::filesystem;
 
-enum operation {create, del, append, end};
+enum operation {create, del};
 enum type {modify_request, sync_request, sync_single_file_request, sync_response, auth_request, response};
 
 struct auth_request{
@@ -55,6 +55,7 @@ struct modify_request{
     operation op;
     std::string content;
     std::string permissions;
+    bool is_directory;
 
     template <class Archive>
     void serialize(Archive& ar, unsigned int version){
@@ -62,6 +63,7 @@ struct modify_request{
         ar & op;
         ar & content;
         ar & permissions;
+        ar & is_directory;
     }
 };
 

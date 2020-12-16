@@ -22,7 +22,7 @@ std::string translate_perms_to_string(fs::perms& p);
 fs::perms translate_string_to_perms(std::string& string);
 int compute_hash(fs::path& path, std::string& hash);
 int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint);
-struct packet create_modify_request(std::string& id, fs::path& path, enum operation op,  fs::file_status& status, void* buf);
+struct packet create_modify_request(std::string& id, fs::path& path, enum operation op,  fs::file_status& status, std::string& buf);
 int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint, operation op = create);
 int send(struct packet & pack, socket_guard &socket);
 int receive(struct packet & pack, socket_guard &socket);
@@ -164,7 +164,6 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
 
     for(auto &file : fs::recursive_directory_iterator(directory)) {
         std::string pr = (fs::path) file;
-        std::cout << pr << std::endl;
         if(fs::is_directory(file)){
             std::pair<std::string, std::string> pair = std::make_pair(fs::relative(file, directory), "\0");
             all_paths.insert(pair);
@@ -178,9 +177,6 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
             else {
                 all_paths.insert(std::pair<std::string, std::string>(fs::relative(file, directory), hash));
             }
-        }
-        for(auto pair : all_paths){
-            std::cout << pair.first << ", " << pair.second << std::endl;
         }
     }
 
@@ -240,25 +236,28 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
     return 1;
 }
 
-struct packet create_modify_request(std::string& id, fs::path& path, enum operation op, fs::file_status& status, void* buf){
+struct packet create_modify_request(std::string& id, fs::path& path, enum operation op, fs::file_status& status, std::string& buf){
     struct packet pack;
     pack.packet_type = modify_request;
     pack.id = id;
     std::string p = path;   //we convert std::filesystem::path to a std::string to void problems like file names with spaces
     pack.mod.path = fs::relative(p, folder);
     pack.mod.op = op;
+    pack.mod.is_directory = path.string().at(path.string().length() - 1) == '/' ? true : false;
 
     //convert fs::permissions to std::string
     fs::perms perms = status.permissions();
     std::string permissions = translate_perms_to_string(perms);
     pack.mod.permissions = permissions;
-    if(buf) pack.mod.content = reinterpret_cast<char*>(buf);
-    else pack.mod.content = "\0";
+    pack.mod.content = buf;
     return pack;
 }
 
 int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint, operation op){
-    if(fs::relative(path, folder).string().at(0) == '.'){
+    std::string str_folder = path;
+    int pos = str_folder.find_last_of('/');
+    std::string str_file = str_folder.substr(pos, str_folder.length());
+    if(str_file.at(1) == '.'){
         return 1;
     }
 
@@ -278,21 +277,13 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
 
     if(fs::is_directory(path)){
         if(op == del){
-
-            /*
-             * delete all subfiles and subdirectories recursivly calling send_file()
-             *
-             * then, send to server the information about the deletion of the folder
-             *
-             * */
-
             for(auto& file : fs::directory_iterator(path)){
                 if(!send_file((fs::path&)file, id, ctx, ssl_ctx, endpoint, del)) return 0;
             }
             std::cout << "delete directory: " << path << std::endl;
 
             fs::file_status status = fs::status(path);
-            struct packet pack = create_modify_request(id, path, del, status, nullptr);
+            struct packet pack = create_modify_request(id, path, del, status, (std::string&)"\0");
 
             //send to server
             if(!send(pack, socket)){
@@ -312,17 +303,9 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
             // send path to server
             fs::file_status status = fs::status(path);
             path += "/";
-            struct packet pack = create_modify_request(id, path, create, status, nullptr);
+            struct packet pack = create_modify_request(id, path, create, status, (std::string&)"\0");
 
             //send to server
-            if(!send(pack, socket)){
-                std::cerr << "Connection error: impossible sending modify packets." << std::endl;
-                std::cerr << "Shutdowning..." << std::endl;
-                return 0;
-            }
-
-            pack = create_modify_request(id, path, end, status, nullptr);
-
             if(!send(pack, socket)){
                 std::cerr << "Connection error: impossible sending modify packets." << std::endl;
                 std::cerr << "Shutdowning..." << std::endl;
@@ -341,7 +324,7 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
         // send to server the information about the deletion of the file
 
         fs::file_status status = fs::status(path);
-        struct packet pack = create_modify_request(id, path, del, status, nullptr);
+        struct packet pack = create_modify_request(id, path, del, status, (std::string&)"\0");
         std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
 
         //send to server
@@ -364,47 +347,23 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
         if (!in.is_open()) {
             return 0;
         }
-        int i = 0;
-        void *buf = (void *) malloc(SIZE);
-        while (!in.eof()) {
-            in.read((char *) buf, SIZE);
-            if (in.bad()) return 0;
+        std::streambuf *buf;
+        buf = in.rdbuf();
 
-            /*  send to server
-             *  if i == 0, then server will create a new file, else server will append content in an existing file;
-             *
-             *  we send to the server create for i == 0; append for i != 0; then, we send an end message
-             *  in any case, in the message there will be the content of the file
-             */
+        if (in.bad())
+            return 0;
 
-            fs::file_status status = fs::status(path);
-            struct packet pack = create_modify_request(id, path, i==0? create : append, status, buf);
-
-            //send to server
-            std::cout << pack.mod.content << std::endl;
-            if(!send(pack, socket)){
-                std::cerr << "Connection error: impossible sending modify packets." << std::endl;
-                std::cerr << "Shutdowning..." << std::endl;
-                return 0;
-            }
-
-            std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
-            i++;
-        }
+        std::string content((std::istreambuf_iterator<char>(buf)), std::istreambuf_iterator<char>());
         fs::file_status status = fs::status(path);
-        struct packet pack = create_modify_request(id, path, end, status, nullptr);
+        struct packet pack = create_modify_request(id, path, create, status, content);
 
-        //send to server
         if(!send(pack, socket)){
             std::cerr << "Connection error: impossible sending modify packets." << std::endl;
             std::cerr << "Shutdowning..." << std::endl;
             return 0;
         }
 
-        std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
-
         in.close();
-        free(buf);
 
         struct packet res;
         if(!receive(res, socket)) {
@@ -451,8 +410,6 @@ int receive(struct packet & pack, socket_guard &socket){
         std::cout << "Receive failed." << std::endl;
         return 0;
     }
-
-    std::cout << header << std::endl;
 
     // read body
     boost::asio::streambuf buf;
@@ -524,7 +481,6 @@ void file_watcher(){
         }
     });
 }
-
 
 int auth(struct packet& auth_pack, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint){
     socket_guard auth_socket(ctx, ssl_ctx);

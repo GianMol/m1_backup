@@ -66,6 +66,7 @@ struct modify_request{
     operation op;
     std::string content;
     std::string permissions;
+    bool is_directory;
 
     template <class Archive>
     void serialize(Archive& ar, unsigned int version){
@@ -73,6 +74,7 @@ struct modify_request{
         ar & op;
         ar & content;
         ar & permissions;
+        ar & is_directory;
     }
 };
 
@@ -179,7 +181,6 @@ private:
 
     void execute_task() {
             std::cout << "Thread in esecuzione" << std::endl;
-            std::queue<struct packet> front_queue;
             boost::asio::streambuf stream;
             struct packet received;
             boost::asio::read(socket, boost::asio::buffer(&header, sizeof(header)));
@@ -192,8 +193,6 @@ private:
             std::istream is(&stream);
             boost::archive::text_iarchive ar(is);
             ar & received;
-
-            front_queue.push(received);
 
             switch (received.packet_type) {
                 /**************************SYNCH REQUEST****************************/
@@ -217,35 +216,11 @@ private:
                     break;
                 }
                 case type::modify_request: {
-                    while (true) {
-                        /***************************MODIFY REQUEST*************************/
-                        boost::asio::read(socket, boost::asio::buffer(&header, sizeof(header)));
-
-                        //Body is
-                        boost::asio::read(socket, stream.prepare(header));
-                        stream.commit(header);
-
-                        //Deserializzazione
-                        std::istream is(&stream);
-                        boost::archive::text_iarchive ar(is);
-                        ar & received;
-
-                        front_queue.push(received);
-                        if (received.mod.op == end)
-                            break;
-                    }
-                    while (!front_queue.empty()) {
-                        auto front_queue2 = front_queue.front();
-                        front_queue.pop();
-                        std::cout << "ESTRAZIONE ANDATA A BUON FINE" << std::endl;
-                        struct packet res_mod;
-                        manage_modify(front_queue2, res_mod);
-                        //Send res to the client
-                        if(front_queue2.mod.op == end){
-                            send(res_mod);
-                            break;
-                        }
-                    }
+                    /***************************MODIFY REQUEST*************************/
+                    struct packet res_mod;
+                    manage_modify(received, res_mod);
+                    //Send res to the client
+                    send(res_mod);
                     break;
                 }
                 default:
@@ -347,7 +322,18 @@ private:
                     res.sync_res.modified_paths.push_back(it->first);
             }
         }
-        res.sync_res.res=true;
+        res.sync_res.res = true;
+        res.sync_res.description = "SUCA BENE";
+
+        /*std::cout << "Server hashes" << std::endl;
+        for(auto it=current_hashs.begin(); it != current_hashs.end(); it++){
+            std::cout << it->first << ", " << it->second << std::endl;
+        }
+
+        std::cout << "Client hashes" << std::endl;
+        for(auto it=req.sync_req.client_paths.begin(); it != req.sync_req.client_paths.end(); it++){
+            std::cout << it->first << ", " << it->second << std::endl;
+        }*/
     }
 
     void manage_modify (struct packet& req, struct packet& res) {
@@ -359,60 +345,63 @@ private:
         fs::path current (path_to_manage);
         fs::path temp_folder_file (path_to_temp);
         std::ifstream ifile;
+
         if(req.mod.op==operation::create) {
             //Create a file in the temp directory
-            std::ofstream fs(path_to_manage);
-            if (!fs) {
-                std::cerr << "Cannot open the output file." << std::endl;
-                //Return error
-                if(fs::exists(temp_folder_file)){
-                    std::filesystem::copy_file(temp_folder_file, path_to_manage);
+            if(req.mod.is_directory){
+                fs::create_directory(path_to_manage);
+                res.res.res = true;
+                res.res.description = "SUCAAAAAA22222!";
+            }
+            else {
+                if(fs::exists(path_to_manage)){
+                    std::filesystem::copy_file(path_to_manage, temp_folder_file);
+                    std::filesystem::remove(path_to_manage);
+                }
+
+                std::ofstream fs(path_to_manage);
+                if (!fs) {
+                    std::cerr << "Cannot open the output file." << std::endl;
+                    //Return error
+                    if(fs::exists(temp_folder_file)){
+                        std::filesystem::copy_file(temp_folder_file, path_to_manage);
+                        std::filesystem::remove(temp_folder_file);
+                    }
+                    res.res.res = false;
+                    res.res.description = "File Creation Error!";
+                }
+
+                if(req.mod.content!="\0") {//Creazione di file
+                    fs << req.mod.content;
                     std::filesystem::remove(temp_folder_file);
                 }
+
+                fs.close();
             }
-            if(req.mod.content=="\0")//Creazione di file
-                fs << req.mod.content;
+
             std::filesystem::perms perms = translate_string_to_perms(req.mod.permissions);
             std::filesystem::permissions(current, perms);
-            fs.close();
+            res.res.res = true;
+            res.res.description = "SUCAAAAAA!";
         }
         else if (req.mod.op==del) {
-            if(!std::filesystem::copy_file(current, temp_folder_file))
+            if(!std::filesystem::copy_file(current, temp_folder_file)) {
                 perror("File copy failed");
-            else {
-                if (!std::filesystem::remove(current))
-                    perror("File deletion failed");
-                else
-                    std::cout << "File deleted successfully";
+                res.res.res = false;
+                res.res.description = "File Deletion Error!";
             }
-        }
-        else if (req.mod.op==append) {
-            //Append content to file in the temp directory
-            std::ofstream outfile;
-            outfile.open(path_to_manage, std::ios_base::app);
-
-            if (!outfile) {
-                std::cerr << "Cannot open the output file." << std::endl;
-                //Return error
-                if(fs::exists(temp_folder_file)){
-                    std::filesystem::copy_file(temp_folder_file, path_to_manage);
-                    std::filesystem::remove(temp_folder_file);
+            else {
+                if (!std::filesystem::remove(current)) {
+                    perror("File deletion failed");
+                    res.res.res = false;
+                    res.res.description = "File Deletion Error!";
+                }
+                else {
+                    std::cout << "File deleted successfully";
+                    res.res.res = true;
+                    res.res.description = "SUCAAAAA";
                 }
             }
-
-            outfile << req.mod.content;
-            std::filesystem::perms perms = translate_string_to_perms(req.mod.permissions);
-            std::filesystem::permissions(current, perms);
-        }
-        else if (req.mod.op==end) {
-            //Se tutto è andato a buon fine, si può spostare il file dalla directory temporanea a quella definitiva
-            if(!std::filesystem::remove(temp_folder_file))
-                perror("Delete failed");
-            else {
-                std::cout << "File deleted successfully from temp";
-            }
-            res.res.res = true;
-            res.res.description = "Sono fortissimo!";
         }
     }
 
@@ -421,7 +410,7 @@ private:
         sqlite3* db;
         sqlite3_stmt* result;
         std::string query;
-        if(sqlite3_open("/Users/damiano/Desktop/CorradoServer/users.db", &db) == 0) {
+        if(sqlite3_open("/Users/damiano/Documents/GitHub/m1_backup/Server/users.db", &db) == 0) {
             query = "SELECT Password FROM utenti WHERE ID=?";
             std::cout<<"QUERY: "<<query<<std::endl;
             sqlite3_prepare( db, query.c_str(), -1, &result, NULL);
@@ -492,9 +481,9 @@ public:
                                 | boost::asio::ssl::context::single_dh_use);
 
         ssl_context.set_password_callback(std::bind(&Server::get_password, this));
-        ssl_context.use_certificate_chain_file("/Users/damiano/Documents/Clion/CorradoServer/myCA.pem");
-        ssl_context.use_private_key_file("/Users/damiano/Documents/Clion/CorradoServer/myCa.key", boost::asio::ssl::context::pem);
-        ssl_context.use_tmp_dh_file("/Users/damiano/Documents/Clion/CorradoServer/dh2048.pem");
+        ssl_context.use_certificate_chain_file("/Users/damiano/Documents/GitHub/m1_backup/Server/myCA.pem");
+        ssl_context.use_private_key_file("/Users/damiano/Documents/GitHub/m1_backup/Server/myCa.key", boost::asio::ssl::context::pem);
+        ssl_context.use_tmp_dh_file("/Users/damiano/Documents/GitHub/m1_backup/Server/dh2048.pem");
 
         accept();
     }
