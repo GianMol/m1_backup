@@ -306,12 +306,6 @@ private:
             }
         }
 
-        //Costruisco i path assoluti partendo da quelli relativi ricevti
-        /*for(it=req.sync_req.client_paths.begin();it!=req.sync_req.client_paths.end();it++){
-            aux=string_folder + it->first;
-            path_to_check.insert(std::pair<std::string, std::string>(aux, it->second));
-        }*/
-
         for (it=req.sync_req.client_paths.begin(); it!=req.sync_req.client_paths.end(); it++){
             auto position = current_hashs.find(it->first);
             if(position==current_hashs.end()){//Path non presente, bisogna inserirlo nel vettore
@@ -320,6 +314,13 @@ private:
             else{
                 if(position->second!=it->second)//Hash diversi
                     res.sync_res.modified_paths.push_back(it->first);
+            }
+        }
+
+        for(auto& path : current_hashs){
+            auto position = req.sync_req.client_paths.find(path.first);
+            if(position == req.sync_req.client_paths.end()){
+                std::filesystem::remove_all(string_folder + path.first);
             }
         }
         res.sync_res.res = true;
