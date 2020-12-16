@@ -38,7 +38,7 @@ std::string id ="10";
 //std::queue<std::queue <struct auth_request>> tasks;
 std::queue<boost::asio::ip::tcp::socket> queues; //Coda di socket
 
-enum operation {create, del, append, end};
+enum operation {create, del};
 enum type {modify_request, sync_request, sync_single_file_request, sync_response, auth_request, response};
 
 struct auth_request{
@@ -385,22 +385,27 @@ private:
             res.res.description = "SUCAAAAAA!";
         }
         else if (req.mod.op==del) {
-            if(!std::filesystem::copy_file(current, temp_folder_file)) {
-                perror("File copy failed");
-                res.res.res = false;
-                res.res.description = "File Deletion Error!";
-            }
-            else {
-                if (!std::filesystem::remove(current)) {
-                    perror("File deletion failed");
+            if (fs::exists(current)) {
+                if (!std::filesystem::copy_file(current, temp_folder_file)) {
+                    perror("File copy failed");
                     res.res.res = false;
                     res.res.description = "File Deletion Error!";
+                } else {
+                    if (!std::filesystem::remove(current)) {
+                        perror("File deletion failed");
+                        res.res.res = false;
+                        res.res.description = "File Deletion Error!";
+                    } else {
+                        std::cout << "File deleted successfully";
+                        res.res.res = true;
+                        res.res.description = "SUCAAAA";
+                    }
                 }
-                else {
-                    std::cout << "File deleted successfully";
-                    res.res.res = true;
-                    res.res.description = "SUCAAAAA";
-                }
+            }
+            else {
+                std::cout << "File deleted successfully";
+                res.res.res = true;
+                res.res.description = "SUCAAAA";
             }
         }
     }
@@ -412,14 +417,11 @@ private:
         std::string query;
         if(sqlite3_open("/Users/damiano/Documents/GitHub/m1_backup/Server/users.db", &db) == 0) {
             query = "SELECT Password FROM utenti WHERE ID=?";
-            std::cout<<"QUERY: "<<query<<std::endl;
             sqlite3_prepare( db, query.c_str(), -1, &result, NULL);
             sqlite3_bind_text(result, 1, req.id.c_str(), req.id.length(), SQLITE_TRANSIENT);
             sqlite3_step(result);
             std::string password_db = reinterpret_cast<const char *>(sqlite3_column_text(result, 0));
             std::string password_user = compute_pass_hash (req.auth.password);
-            std::cout<<"password_db: "<<password_db<<std::endl;
-            std::cout<<"password_user: "<<password_user<<std::endl;
             int out = password_db.compare(password_user);
             if(out ==0){
                 //Digests are equal

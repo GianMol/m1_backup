@@ -163,19 +163,24 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
     }
 
     for(auto &file : fs::recursive_directory_iterator(directory)) {
-        std::string pr = (fs::path) file;
-        if(fs::is_directory(file)){
-            std::pair<std::string, std::string> pair = std::make_pair(fs::relative(file, directory), "\0");
-            all_paths.insert(pair);
-        }
-        else {
-            std::string hash;
-            if(!compute_hash((fs::path &) file, hash)){
-                std::cerr << "Error in computing hash." << std::endl;
-                return 0;
+        std::string str_folder = (fs::path)file;
+        int pos = str_folder.find_last_of('/');
+        std::string str_file = str_folder.substr(pos, str_folder.length());
+        if(str_file.at(1) != '.' || str_file.at(1) == '~'){
+            std::string pr = (fs::path) file;
+            if(fs::is_directory(file)){
+                std::pair<std::string, std::string> pair = std::make_pair(fs::relative(file, directory), "\0");
+                all_paths.insert(pair);
             }
             else {
-                all_paths.insert(std::pair<std::string, std::string>(fs::relative(file, directory), hash));
+                std::string hash;
+                if(!compute_hash((fs::path &) file, hash)){
+                    std::cerr << "Error in computing hash." << std::endl;
+                    return 0;
+                }
+                else {
+                    all_paths.insert(std::pair<std::string, std::string>(fs::relative(file, directory), hash));
+                }
             }
         }
     }
@@ -225,14 +230,13 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
 
     for(auto &file : response.sync_res.modified_paths) {
         fs::path f = folder.string() + "/" + file;
-        std::cout << file << std::endl;
         if(!send_file(f, id, ctx, ssl_ctx, endpoint)){
             std::cerr << "Impossible sending file during synchronization phase" << std::endl;
             return 0;
         }
     }
 
-    std::cout << "synchronization succeded" << std::endl;
+    std::cout << "Synchronization succeded." << std::endl;
     return 1;
 }
 
@@ -257,9 +261,11 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
     std::string str_folder = path;
     int pos = str_folder.find_last_of('/');
     std::string str_file = str_folder.substr(pos, str_folder.length());
-    if(str_file.at(1) == '.'){
+    if(str_file.at(1) == '.' || str_file.at(1) == '~') {
         return 1;
     }
+
+    std::cout << path << std::endl;
 
     socket_guard socket(ctx, ssl_ctx);
     boost::system::error_code err;
@@ -394,7 +400,7 @@ int send(struct packet & pack, socket_guard &socket){
         std::cout << "Send failed: " << err.message() << std::endl;
         return 0;
     }
-    std::cout << "Packet send." << std::endl;
+    std::cout << "Packet sent." << std::endl;
 
     return rc;
 }
@@ -419,6 +425,8 @@ int receive(struct packet & pack, socket_guard &socket){
         std::cout << "Receive failed." << std::endl;
         return 0;
     }
+
+    std::cout << "Packet received." << std::endl;
 
     buf.commit(header);
 
