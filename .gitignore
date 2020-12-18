@@ -44,3 +44,7 @@ Server/_deps
 Server/cmake-build-debug
 Server/.idea
 Server/.DS_Store
+
+Support
+Support/client_paths.txt
+Support/server_paths.txt
