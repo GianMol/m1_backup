@@ -17,6 +17,7 @@ std::queue<struct pair> queue;
 std::mutex m;
 std::condition_variable cv;
 std::string token;
+std::vector<fs::path> invalid;
 
 /***************** PROTOTYPES ***********************/
 std::string translate_path_to_cyg(fs::path& path);
@@ -415,6 +416,7 @@ void file_watcher(){
 
         if(!fs::is_regular_file(fs::path(path_to_watch)) && status != FileStatus::erased) {
             if(fs::is_directory(path_to_watch) && status == FileStatus::created) {
+                invalid.emplace_back(path_to_watch);
                 std::cout << "File created: " << std::endl;
                 p.status = FileStatus::created;
                 queue.push(p);
@@ -426,7 +428,7 @@ void file_watcher(){
 
         switch(status) {
             case FileStatus::created:
-
+                invalid.emplace_back(path_to_watch);
                 std::cout << "File created: " << std::endl;
 
                 p.status = FileStatus::created;
@@ -442,6 +444,7 @@ void file_watcher(){
                 // else, async
                 break;
             case FileStatus::modified:
+                invalid.emplace_back(path_to_watch);
                 std::cout << "File modified: " << std::endl;
 
                 p.status = FileStatus::modified;
@@ -450,6 +453,10 @@ void file_watcher(){
 
                 break;
             case FileStatus::erased:
+                auto it = std::find(invalid.begin(), invalid.end(), path_to_watch);
+                if(it != invalid.end()){
+                    invalid.erase(it);
+                }
                 std::cout << "File deleted: " << std::endl;
 
                 p.status = FileStatus::erased;
@@ -457,8 +464,6 @@ void file_watcher(){
                 cv.notify_all();
 
                 break;
-            default:
-                std::cout << "Error! Unknown file status.\n";
         }
     });
 }

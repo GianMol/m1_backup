@@ -73,5 +73,11 @@ int main(int argc, char* argv[]) {
             //here goes network error
             std::cerr << "Error: Impossible sending " + p.path.string() << std::endl;
         }
+        else{
+            auto it = std::find(invalid.begin(), invalid.end(), p.path);
+            if(it != invalid.end()){
+                invalid.erase(it);
+            }
+        }
     }
 }
