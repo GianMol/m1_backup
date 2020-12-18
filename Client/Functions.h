@@ -166,7 +166,7 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
         std::string str_folder = (fs::path)file;
         int pos = str_folder.find_last_of('/');
         std::string str_file = str_folder.substr(pos, str_folder.length());
-        if(str_file.at(1) != '.' || str_file.at(1) == '~'){
+        if(str_file.at(1) != '~'){
             std::string pr = (fs::path) file;
             if(fs::is_directory(file)){
                 std::pair<std::string, std::string> pair = std::make_pair(fs::relative(file, directory), "\0");
@@ -261,7 +261,7 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
     std::string str_folder = path;
     int pos = str_folder.find_last_of('/');
     std::string str_file = str_folder.substr(pos, str_folder.length());
-    if(str_file.at(1) == '.' || str_file.at(1) == '~') {
+    if(str_file.at(1) == '~') {
         return 1;
     }
 
@@ -416,7 +416,6 @@ void file_watcher(){
             }
             return;
         }
-
 
 
         switch(status) {

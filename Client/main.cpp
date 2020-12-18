@@ -67,8 +67,7 @@ int main(int argc, char* argv[]) {
         //send file
         if(!send_file(p.path, id, ctx, ssl_ctx, endpoint, p.status == FileStatus::erased? operation::del : operation::create)){
             //here goes network error
-            std::cout << "Error" << std::endl;
-            return -1;
+            std::cerr << "Error: Impossible sending " + p.path.string() << std::endl;
         }
     }
 }
