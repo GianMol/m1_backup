@@ -1,0 +1,5 @@
+/Users/damiano/Documents/GitHub/m1_backup/Server/myCA.pem
+/Users/damiano/Documents/GitHub/m1_backup/Server/myCa.key
+/Users/damiano/Documents/GitHub/m1_backup/Server/dh2048.pem
+/Users/damiano/Documents/GitHub/m1_backup/Server/users.db
+/Users/damiano/Desktop/ServerBackup/

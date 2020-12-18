@@ -6,6 +6,8 @@
 #define SIZE 1024
 #define SERVER "127.0.0.1"
 #define PORT "9999"
+#define FILE_PATHS "/Users/damiano/Documents/GitHub/m1_backup/Support/client_paths.txt"
+#define FILE_PATH_LENGTH 300
 
 namespace fs = std::filesystem;
 
@@ -30,6 +32,7 @@ int receive(struct packet & pack, socket_guard &socket);
 void file_watcher();
 int auth(struct packet& auth_pack, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint);
 int process_response(struct packet& pack);
+int load_certificate(std::string& cert);
 
 /******************** FUNCTIONS *****************************/
 std::string translate_path_to_cyg(fs::path& path){
@@ -498,4 +501,18 @@ int auth(struct packet& auth_pack, boost::asio::io_context & ctx, boost::asio::s
 int process_response(struct packet& pack){
     std::cout << pack.res.description << std::endl;
     return pack.res.res;
+}
+
+int load_certificate(std::string& cert){
+    std::ifstream in(FILE_PATHS);
+    if(!in) return 0;
+    char c[FILE_PATH_LENGTH];
+    in.getline(c, FILE_PATH_LENGTH);
+    if(in.bad()) return 0;
+    cert = c;
+    in.getline(c, FILE_PATH_LENGTH);
+    if(in.bad()) return 0;
+    folder = c;
+    in.close();
+    return 1;
 }

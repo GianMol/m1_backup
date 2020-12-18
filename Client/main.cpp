@@ -3,20 +3,24 @@
 namespace fs = std::filesystem;
 
 int main(int argc, char* argv[]) {
-    if(argc < 4){
+    if(argc < 3){
         std::cerr << "Error: parameters missing";
         return -1;
     }
 
-    folder = argv[1];
-    std::string id = argv[2];
-    std::string password = argv[3];
+    std::string id = argv[1];
+    std::string password = argv[2];
+    std::string certificate;
+    if(!load_certificate(certificate)){
+        std::cerr << "Error: list of certificate files missing. Shutdowning..." << std::endl;
+        return 0;
+    }
 
     std::unique_lock<std::mutex> ul(m);
 
     boost::asio::io_context ctx;
     boost::asio::ssl::context ssl_ctx(boost::asio::ssl::context::tlsv12);
-    ssl_ctx.load_verify_file("/Users/damiano/Documents/GitHub/m1_backup/Client/myCA.pem");
+    ssl_ctx.load_verify_file(certificate);
     boost::asio::ip::tcp::resolver resolver(ctx);
     auto endpoint = resolver.resolve(SERVER, PORT);
 

@@ -28,9 +28,11 @@
 
 namespace fs = std::filesystem;
 #define SIZE 1024
+#define FILE_PATHS "/Users/damiano/Documents/GitHub/m1_backup/Support/server_paths.txt"
+#define FILE_PATH_LENGTH 300
 
-//global variable socket
-fs::path backup = "/Users/damiano/Desktop/Backup/";
+//global variables
+std::string files[5];//certificate, private_key, dh, sqlite, backup;
 std::map<std::string, std::string> tokens = {
         {"21908767", "0"},
         {"27898909", "0"},
@@ -327,7 +329,7 @@ private:
         std::map <std::string, std::string> path_to_check;
         std::string aux;
         std::string hash;
-        std::string string_folder = backup.string() +  req.id + "/backup/";
+        std::string string_folder = files[4] +  req.id + "/backup/";
         fs::path folder = string_folder;
 
 
@@ -396,8 +398,8 @@ private:
         }
         std::string received_path = req.mod.path;
         std::string relative_path = received_path.substr(received_path.find_last_of('/') + 1, received_path.length());
-        std::string back_folder = "/Users/damiano/Desktop/Backup/" + req.id + "/backup/";
-        std::string temp_folder = "/Users/damiano/Desktop/Backup/" + req.id + "/temp/";
+        std::string back_folder = files[4] + req.id + "/backup/";
+        std::string temp_folder = files[4] + req.id + "/temp/";
         std::string path_to_manage = back_folder + received_path;
         std::string path_to_temp = temp_folder + relative_path;
         fs::path current (path_to_manage);
@@ -559,7 +561,7 @@ private:
         sqlite3* db;
         sqlite3_stmt* result;
         std::string query;
-        if(sqlite3_open("/Users/damiano/Documents/GitHub/m1_backup/Server/users.db", &db) == 0) {
+        if(sqlite3_open(files[3].c_str(), &db) == 0) {
             query = "SELECT Password FROM utenti WHERE ID=?";
             sqlite3_prepare( db, query.c_str(), -1, &result, NULL);
             sqlite3_bind_text(result, 1, req.id.c_str(), req.id.length(), SQLITE_TRANSIENT);
@@ -637,9 +639,9 @@ public:
                                 | boost::asio::ssl::context::single_dh_use);
 
         ssl_context.set_password_callback(std::bind(&Server::get_password, this));
-        ssl_context.use_certificate_chain_file("/Users/damiano/Documents/GitHub/m1_backup/Server/myCA.pem");
-        ssl_context.use_private_key_file("/Users/damiano/Documents/GitHub/m1_backup/Server/myCa.key", boost::asio::ssl::context::pem);
-        ssl_context.use_tmp_dh_file("/Users/damiano/Documents/GitHub/m1_backup/Server/dh2048.pem");
+        ssl_context.use_certificate_chain_file(files[0]);
+        ssl_context.use_private_key_file(files[1], boost::asio::ssl::context::pem);
+        ssl_context.use_tmp_dh_file(files[2]);
 
         accept();
     }
@@ -662,8 +664,26 @@ private:
     }
 };
 
+int load_certificates(){
+    //std::string certificate, private_key, dh, sqlite, backup;
+    std::ifstream in(FILE_PATHS);
+    if(!in) return 0;
+    char c[FILE_PATH_LENGTH];
+    for(auto & file : files){
+        in.getline(c, FILE_PATH_LENGTH);
+        if(in.bad()) return 0;
+        file = c;
+    }
+    in.close();
+    return 1;
+}
+
 
 int main() {
+    if(!load_certificates()){
+        std::cerr << "Error: list of certificate files missing. Shutdowning..." << std::endl;
+        return 0;
+    }
     boost::asio::io_context io_context;
 
     Server server (io_context);
