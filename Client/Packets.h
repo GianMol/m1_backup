@@ -92,6 +92,7 @@ struct sync_response{
 struct packet{
     std::string id;
     type packet_type;
+    std::string token;
     struct auth_request auth;
     struct modify_request mod;
     struct response res;
@@ -102,6 +103,7 @@ struct packet{
     void serialize(Archive& ar, unsigned int version){
         ar & id;
         ar & packet_type;
+        ar & token;
         ar & auth;
         ar & mod;
         ar & res;

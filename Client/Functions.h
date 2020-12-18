@@ -14,6 +14,7 @@ fs::path folder; //it is a global variable in order to get the subdirectories an
 std::queue<struct pair> queue;
 std::mutex m;
 std::condition_variable cv;
+std::string token;
 
 /***************** PROTOTYPES ***********************/
 std::string translate_path_to_cyg(fs::path& path);
@@ -200,6 +201,7 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
     struct packet pack;
     pack.packet_type = sync_request;
     pack.id = id;
+    pack.token = token;
     pack.sync_req.client_paths = all_paths;
 
     if(!send(pack, socket)){
@@ -242,8 +244,9 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
 
 struct packet create_modify_request(std::string& id, fs::path& path, enum operation op, fs::file_status& status, std::string& buf){
     struct packet pack;
-    pack.packet_type = modify_request;
     pack.id = id;
+    pack.packet_type = modify_request;
+    pack.token = token;
     std::string p = path;   //we convert std::filesystem::path to a std::string to void problems like file names with spaces
     pack.mod.path = fs::relative(p, folder);
     pack.mod.op = op;
@@ -488,7 +491,7 @@ int auth(struct packet& auth_pack, boost::asio::io_context & ctx, boost::asio::s
         std::cerr << "Shutdowning..." << std::endl;
         return 0;
     }
-
+    token = auth_res.token;
     return process_response(auth_res);
 }
 

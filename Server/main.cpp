@@ -31,7 +31,17 @@ namespace fs = std::filesystem;
 
 //global variable socket
 fs::path backup = "/Users/damiano/Desktop/Backup/";
-std::string id ="10";
+std::map<std::string, std::string> tokens = {
+        {"21908767", "0"},
+        {"27898909", "0"},
+        {"34567892", "0"},
+        {"98345678", "0"},
+        {"67905423", "0"},
+        {"54096523", "0"},
+        {"90124567", "0"},
+        {"56903456", "0"},
+        {"21345678", "0"}
+};
 
 //TASK TO EXECUTE
 //std::queue<std::queue <struct auth_request>> tasks;
@@ -102,6 +112,7 @@ struct sync_response{
 struct packet{
     std::string id;
     type packet_type;
+    std::string token;
     struct auth_request auth;
     struct modify_request mod;
     struct response res;
@@ -112,6 +123,7 @@ struct packet{
     void serialize(Archive& ar, unsigned int version){
         ar & id;
         ar & packet_type;
+        ar & token;
         ar & auth;
         ar & mod;
         ar & res;
@@ -155,6 +167,23 @@ private:
         else {
             std::cout << "Handshake failed: " << error.message() << "\n";
         }
+    }
+
+    void gen_random(std::string& result, const int& len) {
+        unsigned char alphanum[] =
+                "0123456789"
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                "abcdefghijklmnopqrstuvwxyz";
+        unsigned char s [len];
+        for (int i = 0; i < len; ++i) {
+            s[i] = alphanum[rand() % (sizeof(alphanum) - 1)];
+        }
+        std::stringstream ss;
+        for(int i = 0; i < len; i++){
+            ss << std::hex << std::setw(2) << std::setfill('0') << (int)s[i];
+        }
+        s[len] = 0;
+        result = ss.str();
     }
 
     int send (struct packet pack){
@@ -288,6 +317,11 @@ private:
     }
 
     int manage_synch (struct packet& req, struct packet& res){
+        if(tokens.find(req.id)->second != req.token){
+            res.sync_res.res = false;
+            res.sync_res.description = "MA chi sei???";
+            return 0;
+        }
         std::map <std::string, std::string> current_hashs;
         std::map <std::string, std::string>::iterator it;
         std::map <std::string, std::string> path_to_check;
@@ -295,6 +329,7 @@ private:
         std::string hash;
         std::string string_folder = backup.string() +  req.id + "/backup/";
         fs::path folder = string_folder;
+
 
         if(!fs::exists(folder)) {
             res.sync_res.res = false;
@@ -354,6 +389,11 @@ private:
     }
 
     int manage_modify (struct packet& req, struct packet& res) {
+        if(tokens.find(req.id)->second != req.token){
+            res.sync_res.res = false;
+            res.sync_res.description = "MA chi sei???";
+            return 0;
+        }
         std::string received_path = req.mod.path;
         std::string relative_path = received_path.substr(received_path.find_last_of('/') + 1, received_path.length());
         std::string back_folder = "/Users/damiano/Desktop/Backup/" + req.id + "/backup/";
@@ -532,6 +572,10 @@ private:
                 //Set auth_response with successfull state
                 res.res.description="Authentication ok";
                 res.res.res=true;
+                gen_random(res.token, 512);
+                if(tokens.find(req.id) != tokens.end()){
+                    tokens.find(req.id) -> second = res.token;
+                }
                 return 1;
             } else{
                 //Digests are different
