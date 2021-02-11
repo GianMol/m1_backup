@@ -27,7 +27,7 @@ int main(int argc, char* argv[]) {
 
     /*********** authentication phase ***************************/
 
-    struct packet auth_pack;
+    struct request auth_pack;
     auth_pack.id = id;
     auth_pack.packet_type = auth_request;
     auth_pack.auth.password = password;
@@ -41,18 +41,70 @@ int main(int argc, char* argv[]) {
     /*********** fixing path in case of windows systems **********/
     folder = translate_path_to_cyg(folder);
 
-    /************ synchronization phase ***************************/
     if(!fs::is_directory(folder)){
         std::cerr << "Error: the argument is not a directory. Shutdowning..." << std::endl;
         return -1;
     }
+    /************ synchronization phase ***************************/
 
-    std::cout << "Syncronizing folder " << folder << std::endl;
-
-    if(!sync(folder, id, ctx, ssl_ctx, endpoint)){
-        std::cerr << "Error sync" << std::endl;
-        return -1;
+    int choice = 0;
+    do {
+        std::cout << "********************** MENÙ **********************" << std::endl;
+        std::cout
+        << "1) Download backup from remote server." << std::endl
+        << "2) Synchronize server from local folder." << std::endl
+        << "3) Check the synchronization of some data."<< std::endl
+        << "4) Exit." << std::endl;
+        std::cin >> choice;
+        switch(choice){
+            case 1: {
+                std::cout << "Downloading backup..." << std::endl;
+                if (!down(id, ctx, ssl_ctx, endpoint)) {
+                    std::cerr << "Error in synchronization." << std::endl;
+                    return -1;
+                }
+                std::cout << "Download succeded." << std::endl;
+                choice = -1;
+                break;
+            }
+            case 2: {
+                std::cout << "Synchronizing folder..." << folder << std::endl;
+                if (!sync(folder, id, ctx, ssl_ctx, endpoint)) {
+                    std::cerr << "Error in synchronization." << std::endl;
+                    return -1;
+                }
+                std::cout << "Synchronization succeded." << std::endl;
+                choice = -1;
+                break;
+            }
+            case 3: {
+                std::cout << "Insert path to check: " << std::endl;
+                std::string path;
+                std::cin >> path;
+                int result = check(path, id, ctx, ssl_ctx, endpoint);
+                if(result == 0){
+                    std::cerr << "Impossible checking path" << std::endl;
+                    std::cerr << "Shutdowning..." << std::endl;
+                    return 0;
+                }
+                else if(result == -1){
+                    std::cout << "File is not synchronized" << std::endl;
+                }
+                else {
+                    std::cout << "File is synchronized" << std::endl;
+                }
+                break;
+            }
+            case 4: {
+                std::cout << "Shutdowning..." << std::endl;
+                return 0;
+            }
+            default:
+                std::cout << "Insert a valid value." << std::endl;
+        }
     }
+    while(0 <= choice && choice < 4);
+
 
     /************ synchronization phase ended *********************/
 

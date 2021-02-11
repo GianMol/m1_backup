@@ -1,5 +1,6 @@
 #include <iostream>
 #include "FileWatcher.h"
+#include "Packets.h"
 #include "ThreadGuardVector.cpp"
 #include <filesystem>
 #include <fstream>
@@ -49,97 +50,6 @@ std::map<std::string, std::string> tokens = {
 //std::queue<std::queue <struct auth_request>> tasks;
 std::queue<boost::asio::ip::tcp::socket> queues; //Coda di socket
 
-enum operation {create, del};
-enum type {modify_request, sync_request, sync_single_file_request, sync_response, auth_request, response};
-
-struct auth_request{
-    std::string password;
-
-    template <class Archive>
-    void serialize(Archive& ar, unsigned int version){
-        ar & password;
-    }
-};
-
-struct response{
-    bool res;
-    std::string description;
-
-    template <class Archive>
-    void serialize(Archive& ar, unsigned int version){
-        ar & res;
-        ar & description;
-    }
-};
-
-struct modify_request{
-    std::string path;
-    operation op;
-    std::string content;
-    std::string permissions;
-    bool is_directory;
-
-    template <class Archive>
-    void serialize(Archive& ar, unsigned int version){
-        ar & path;
-        ar & op;
-        ar & content;
-        ar & permissions;
-        ar & is_directory;
-    }
-};
-
-struct sync_request{
-    std::map<std::string, std::string> client_paths;
-
-    template <class Archive>
-    void serialize(Archive& ar, unsigned int version){
-        ar & client_paths;
-    }
-};
-
-struct sync_response{
-    std::vector<std::string> modified_paths;
-    bool res;
-    std::string description;
-
-    template <class Archive>
-    void serialize(Archive& ar, unsigned int version){
-        ar & modified_paths;
-        ar & res;
-        ar & description;
-    }
-};
-
-struct packet{
-    std::string id;
-    type packet_type;
-    std::string token;
-    struct auth_request auth;
-    struct modify_request mod;
-    struct response res;
-    struct sync_request sync_req;
-    struct sync_response sync_res;
-
-    template <class Archive>
-    void serialize(Archive& ar, unsigned int version){
-        ar & id;
-        ar & packet_type;
-        ar & token;
-        ar & auth;
-        ar & mod;
-        ar & res;
-        ar & sync_req;
-        ar & sync_res;
-    }
-
-};
-
-struct pair{
-    fs::path path;
-    FileStatus status;
-};
-
 
 using boost::asio::ip::tcp;
 
@@ -188,7 +98,7 @@ private:
         result = ss.str();
     }
 
-    int send (struct packet pack){
+    int send (struct response pack){
         boost::asio::streambuf buf;
         std::ostream os(&buf);
         boost::archive::text_oarchive ar(os);
@@ -214,7 +124,7 @@ private:
     void execute_task() {
             std::cout << "Thread in esecuzione" << std::endl;
             boost::asio::streambuf stream;
-            struct packet received;
+            struct request received;
             boost::asio::read(socket, boost::asio::buffer(&header, sizeof(header)));
 
             //Body is
@@ -229,11 +139,11 @@ private:
             switch (received.packet_type) {
                 /**************************SYNCH REQUEST****************************/
                 case type::sync_request: {
-                    struct packet res_synch;
+                    struct response res_synch;
                     if(!manage_synch(received, res_synch)){
                         std::cerr << "Fase di sincronizzazione fallita" << std::endl;
                     };
-                    std::cout<<res_synch.res.description<<std::endl;
+                    std::cout<<res_synch.gen_res.description<<std::endl;
                     //Send res to the client
                     std::vector<std::string>::iterator it;
                     for(it=res_synch.sync_res.modified_paths.begin(); it!=res_synch.sync_res.modified_paths.end(); it++){
@@ -245,12 +155,12 @@ private:
                     break;
                 }
                 case type::auth_request: {
-                    struct packet res_auth;
+                    struct response res_auth;
                     if(!manage_auth(received, res_auth)){
                         std::cerr << "Fase di authenticazione fallita" << std::endl;
                     };
                     //Send res to the client
-                    std::cout<<res_auth.res.description<<std::endl;
+                    std::cout<<res_auth.gen_res.description<<std::endl;
                     if(!send(res_auth)){
                         std::cerr << "Errore di connessione: impossibile mandare pacchetto di autenticazione." << std::endl;
                     }
@@ -258,13 +168,37 @@ private:
                 }
                 case type::modify_request: {
                     /***************************MODIFY REQUEST*************************/
-                    struct packet res_mod;
+                    struct response res_mod;
                     if(!manage_modify(received, res_mod)){
                         std::cerr << "Modify phase failed" << std::endl;
                     }
                     //Send res to the client
-                    std::cout<<res_mod.res.description<<std::endl;
+                    std::cout<<res_mod.gen_res.description<<std::endl;
                     if(!send(res_mod)){
+                        std::cerr << "Errore di connessione: impossibile mandare pacchetto di modifica." << std::endl;
+                    }
+                    break;
+                }
+                case type::down_request: {
+                    struct response res;
+                    if(!manage_down(received, res)){
+                        std::cerr << "Modify phase failed" << std::endl;
+                    }
+                    //Send res to the client
+                    std::cout<<res.gen_res.description<<std::endl;
+                    if(!send(res)){
+                        std::cerr << "Errore di connessione: impossibile mandare pacchetto di modifica." << std::endl;
+                    }
+                    break;
+                }
+                case type::file_request: {
+                    struct response res;
+                    if(!manage_file(received, res)){
+                        std::cerr << "File Request failed" << std::endl;
+                    }
+                    //Send res to the client
+                    std::cout<<res.gen_res.description<<std::endl;
+                    if(!send(res)){
                         std::cerr << "Errore di connessione: impossibile mandare pacchetto di modifica." << std::endl;
                     }
                     break;
@@ -294,9 +228,10 @@ private:
     int compute_hash(fs::path& path, std::string& hash){
         SHA256_CTX ctx;
         SHA256_Init(&ctx);
-        unsigned char md_value[SHA256_DIGEST_LENGTH];
+        unsigned char md_value[SHA256_DIGEST_LENGTH] = {0};
         unsigned char buf[SIZE];
         int len;
+        std::cout << md_value << std::endl;
 
         std::ifstream in;
         in.open(path, std::ios::binary);
@@ -304,7 +239,9 @@ private:
             return 0;
         }
 
+        int i=0;
         while(!in.eof()) {
+            i++;
             in.read((char *) buf, SIZE);
             if (in.bad()) return 0;
             else{
@@ -318,10 +255,10 @@ private:
         return 1;
     }
 
-    int manage_synch (struct packet& req, struct packet& res){
+    int manage_synch (struct request& req, struct response& res){
         if(tokens.find(req.id)->second != req.token){
             res.sync_res.res = false;
-            res.sync_res.description = "MA chi sei???";
+            res.sync_res.description = "User not authorized";
             return 0;
         }
         std::map <std::string, std::string> current_hashs;
@@ -390,10 +327,10 @@ private:
         }*/
     }
 
-    int manage_modify (struct packet& req, struct packet& res) {
+    int manage_modify (struct request& req, struct response& res) {
         if(tokens.find(req.id)->second != req.token){
-            res.sync_res.res = false;
-            res.sync_res.description = "MA chi sei???";
+            res.gen_res.res = false;
+            res.gen_res.description = "User not authorized";
             return 0;
         }
         std::string received_path = req.mod.path;
@@ -407,24 +344,24 @@ private:
         std::ifstream ifile;
 
         if(req.mod.op==operation::create) {
-                    //Create a file in the temp directory
-                    if(req.mod.is_directory){
-                        fs::create_directory(path_to_manage);
-                        res.res.res = true;
-                res.res.description = "Directory creata con successo!";
+            //Create a file in the temp directory
+            if(req.mod.is_directory){
+                fs::create_directory(path_to_manage);
+                res.gen_res.res = true;
+                res.gen_res.description = "Directory creata con successo!";
                 return 1;
             }
             else {
                 if(fs::exists(path_to_manage)){
                     if(!std::filesystem::copy_file(path_to_manage, temp_folder_file)){
-                        res.res.res = false;
-                        res.res.description = "Errore durante la copia verso la cartella temporanea";
+                        res.gen_res.res = false;
+                        res.gen_res.description = "Errore durante la copia verso la cartella temporanea";
                         std::cout<<"Copia fallita"<<std::endl;
                         return 0;
                     }
                     if(!std::filesystem::remove(path_to_manage)){
-                        res.res.res = false;
-                        res.res.description = "Errore durante la rimozione del file dalla cartella backup";
+                        res.gen_res.res = false;
+                        res.gen_res.description = "Errore durante la rimozione del file dalla cartella backup";
                         std::cout<<"Rimozione fallita"<<std::endl;
                         return 0;
                     }
@@ -435,20 +372,20 @@ private:
                     //Return error
                     if(fs::exists(temp_folder_file)){
                         if(!std::filesystem::copy_file(temp_folder_file, path_to_manage)){
-                            res.res.res = false;
-                            res.res.description = "Apertura File: Errore durante la copia verso la cartella backup";
+                            res.gen_res.res = false;
+                            res.gen_res.description = "Apertura File: Errore durante la copia verso la cartella backup";
                             std::cout<<"Copia fallita"<<std::endl;
                             return 0;
                         };
                         if(!std::filesystem::remove(temp_folder_file)){
-                            res.res.res = false;
-                            res.res.description = "Apertura File: Errore durante la rimozione del file dalla cartella temporanea";
+                            res.gen_res.res = false;
+                            res.gen_res.description = "Apertura File: Errore durante la rimozione del file dalla cartella temporanea";
                             std::cout<<"Rimozione fallita."<<std::endl;
                             return 0;
                         };
                     }
-                    res.res.res = false;
-                    res.res.description = "Errore durante l'apertura del file";
+                    res.gen_res.res = false;
+                    res.gen_res.description = "Errore durante l'apertura del file";
                     return 0;
                 }
 
@@ -456,16 +393,16 @@ private:
                     fs << req.mod.content;
                     if(fs.bad()){
                         std::cout<<"Scrittura fallita."<<std::endl;
-                        res.res.res = false;
-                        res.res.description = "Errore durante la scrittura del file";
+                        res.gen_res.res = false;
+                        res.gen_res.description = "Errore durante la scrittura del file";
                         return 0;
                     }
                 }
                 fs.close();
                 if(fs::exists(temp_folder_file)) {
                     if(!std::filesystem::remove(temp_folder_file)){
-                        res.res.res = false;
-                        res.res.description = "Errore durante la rimozione del file dalla cartella temporanea";
+                        res.gen_res.res = false;
+                        res.gen_res.description = "Errore durante la rimozione del file dalla cartella temporanea";
                         std::cout<<"Rimozione fallita"<<std::endl;
                         return 0;
                     }
@@ -474,8 +411,8 @@ private:
 
             std::filesystem::perms perms = translate_string_to_perms(req.mod.permissions);
             std::filesystem::permissions(current, perms);
-            res.res.res = true;
-            res.res.description = "File creato con successo.";
+            res.gen_res.res = true;
+            res.gen_res.description = "File creato con successo.";
             return 1;
         }
         else if (req.mod.op==del) {
@@ -485,78 +422,151 @@ private:
                     std::filesystem::copy(current, temp_folder_file, err);
                     if (err) {
                         std::cout<<"Errore durante la copia verso la cartella temporanea"<<std::endl;
-                        res.res.res = false;
-                        res.res.description = "Copia Fallita";
+                        res.gen_res.res = false;
+                        res.gen_res.description = "Copia Fallita";
                         return 0;
                     } else {
                         if (!std::filesystem::remove_all(current)) {
                             std::cout<<"Rimozione fallita"<<std::endl;
-                            res.res.res = false;
-                            res.res.description = "Errore durante la rimozione dei file!";
+                            res.gen_res.res = false;
+                            res.gen_res.description = "Errore durante la rimozione dei file!";
                             return 0;
                         } else {
                             if(!std::filesystem::remove_all(temp_folder_file)){
                                 std::cout<<"Rimozione fallita"<<std::endl;
-                                res.res.res = false;
-                                res.res.description = "Errore durante la rimozione dei file!";
+                                res.gen_res.res = false;
+                                res.gen_res.description = "Errore durante la rimozione dei file!";
                                 return 0;
                             }
                             std::cout << "Rimozione andata a buon fine" << std::endl;
-                            res.res.res = true;
-                            res.res.description = "Rimozione eseguita con sucesso!";
+                            res.gen_res.res = true;
+                            res.gen_res.description = "Rimozione eseguita con sucesso!";
                             return 1;
                         }
                     }
                 }
                 else {//???????????
                     std::cout << "File non esistente" << std::endl;
-                    res.res.res = true;
-                    res.res.description = "File non esistente";
+                    res.gen_res.res = true;
+                    res.gen_res.description = "File non esistente";
                     return 1;
                 }
             }
             if (fs::exists(path_to_manage)) {
                 if (!std::filesystem::copy_file(current, temp_folder_file)) {
                     std::cout<<"Rimozione File: Errore durante la copia verso la cartella temporanea."<<std::endl;
-                    res.res.res = false;
-                    res.res.description = "Rimozione non andata a buon fine!";
+                    res.gen_res.res = false;
+                    res.gen_res.description = "Rimozione non andata a buon fine!";
                     return 0;
                 } else {
                     if (!std::filesystem::remove(current)) {
                         std::cout<<"Errore durante la rimozione del file"<<std::endl;
-                        res.res.res = false;
-                        res.res.description = "Rimozione non andata a buon fine.";
+                        res.gen_res.res = false;
+                        res.gen_res.description = "Rimozione non andata a buon fine.";
                         return 0;
                     } else {
                         if(!std::filesystem::remove(temp_folder_file)){
                             std::cout<<"Errore durante la rimozione del file"<<std::endl;
-                            res.res.res = false;
-                            res.res.description = "Rimozione non andata a buon fine.";
+                            res.gen_res.res = false;
+                            res.gen_res.description = "Rimozione non andata a buon fine.";
                             return 0;
                         }
                         std::cout << "Rimozione andata a buon fine" << std::endl;
-                        res.res.res = true;
-                        res.res.description = "Rimozione eseguita con successo";
+                        res.gen_res.res = true;
+                        res.gen_res.description = "Rimozione eseguita con successo";
                         return 1;
                     }
                 }
             }
             else {//???
                 std::cout << "File deleted successfully" << std::endl;
-                res.res.res = true;
-                res.res.description = "SUCAAAA";
+                res.gen_res.res = true;
+                res.gen_res.description = "SUCAAAA";
                 return 1;
             }
         }
         else {
             std::cout << "Operation not supported." << std::endl;
-            res.res.res = false;
-            res.res.description = "Operation not supported.";
+            res.gen_res.res = false;
+            res.gen_res.description = "Operation not supported.";
             return 0;
         }
     }
 
-    int manage_auth (struct packet& req, struct packet& res) {
+    int manage_down (struct request& req, struct response& res) {
+        if(tokens.find(req.id)->second != req.token){
+            res.gen_res.res = false;
+            res.gen_res.description = "User not authorized";
+            return 0;
+        }
+
+        std::string directory = files[4] + req.id + "/backup/";
+        std::map<std::string, std::string> all_paths;
+
+        for(auto &file : fs::recursive_directory_iterator(directory)) {
+            std::string str_folder = (fs::path)file;
+            int pos = str_folder.find_last_of('/');
+            std::string str_file = str_folder.substr(pos, str_folder.length());
+            if(str_file.at(1) != '~'){
+                std::string pr = (fs::path) file;
+                if(fs::is_directory(file)){
+                    std::pair<std::string, std::string> pair = std::make_pair(fs::relative(file, directory), "\0");
+                    all_paths.insert(pair);
+                }
+                else {
+                    std::string hash;
+                    if(!compute_hash((fs::path &) file, hash)){
+                        std::cerr << "Error in computing hash." << std::endl;
+                        return 0;
+                    }
+                    else {
+                        all_paths.insert(std::pair<std::string, std::string>(fs::relative(file, directory), hash));
+                    }
+                }
+            }
+        }
+
+        res.packet_type = down_response;
+        res.id = req.id;
+        res.token = req.token;
+        res.down_res.client_paths = all_paths;
+        return 1;
+    }
+
+    int manage_file (struct request& req, struct response& res) {
+        std::ifstream in;
+        std::string absolute_path = files[4] + req.id + "/backup/" + req.file_req.path;
+        in.open(absolute_path, std::ios::binary);
+        if (!in.is_open()) {
+            return 0;
+        }
+        std::streambuf *buf;
+        buf = in.rdbuf();
+
+        if (in.bad())
+            return 0;
+
+        std::string content((std::istreambuf_iterator<char>(buf)), std::istreambuf_iterator<char>());
+        fs::file_status status = fs::status(req.file_req.path);
+
+        res.id = req.id;
+        res.packet_type = file_response;
+        res.file_res.content = content;
+        res.token = req.token;
+        res.file_res.path = req.file_req.path;
+        fs::path p = absolute_path;
+        res.file_res.is_directory = fs::is_directory(p);
+
+        //convert fs::permissions to std::string
+        fs::perms perms = status.permissions();
+        std::string permissions = translate_perms_to_string(perms);
+        res.file_res.permissions = permissions;
+
+        in.close();
+        return 1;
+    }
+
+    int manage_auth (struct request& req, struct response& res) {
         //Interrogare il db e vedere se l'username e la password coincidono
         sqlite3* db;
         sqlite3_stmt* result;
@@ -572,8 +582,8 @@ private:
             if(out ==0){
                 //Digests are equal
                 //Set auth_response with successfull state
-                res.res.description="Authentication ok";
-                res.res.res=true;
+                res.gen_res.description="Authentication ok";
+                res.gen_res.res=true;
                 gen_random(res.token, 512);
                 if(tokens.find(req.id) != tokens.end()){
                     tokens.find(req.id) -> second = res.token;
@@ -582,14 +592,14 @@ private:
             } else{
                 //Digests are different
                 //Set auth_response with error state
-                res.res.description="Authentication failed";
-                res.res.res=false;
+                res.gen_res.description="Authentication failed";
+                res.gen_res.res=false;
                 std::cout<<"Autenticazione fallita"<<std::endl;
                 return 0;
             }
         } else{
-            res.res.description="Errore apertura db";
-            res.res.res=false;
+            res.gen_res.description="Errore apertura db";
+            res.gen_res.res=false;
             std::cout<<"Errore apertura db"<<std::endl;
             return 0;
         }

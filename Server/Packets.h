@@ -21,7 +21,6 @@
 /********** OPENSSL **********/
 #include <openssl/evp.h>
 #include <openssl/sha.h>
-#include <openssl/crypto.h>
 
 /*********** MYLIB ***********/
 #include "FileWatcher.h"
@@ -91,11 +90,11 @@ struct sync_response{
 };
 
 struct down_response{
-    std::map<std::string, std::string> server_paths;
+    std::map<std::string, std::string> client_paths;
 
     template <class Archive>
     void serialize(Archive& ar, unsigned int version){
-        ar & server_paths;
+        ar & client_paths;
     }
 };
 
