@@ -51,10 +51,10 @@ int main(int argc, char* argv[]) {
     do {
         std::cout << "********************** MENÙ **********************" << std::endl;
         std::cout
-        << "1) Download backup from remote server." << std::endl
-        << "2) Synchronize server from local folder." << std::endl
-        << "3) Check the synchronization of some data."<< std::endl
-        << "4) Exit." << std::endl;
+                << "1) Download backup from remote server." << std::endl
+                << "2) Synchronize server from local folder." << std::endl
+                << "3) Check the synchronization of some data."<< std::endl
+                << "4) Exit." << std::endl;
         std::cin >> choice;
         switch(choice){
             case 1: {

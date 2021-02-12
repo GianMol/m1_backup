@@ -122,90 +122,90 @@ private:
     }
 
     void execute_task() {
-            std::cout << "Thread in esecuzione" << std::endl;
-            boost::asio::streambuf stream;
-            struct request received;
-            boost::asio::read(socket, boost::asio::buffer(&header, sizeof(header)));
+        std::cout << "Thread in esecuzione" << std::endl;
+        boost::asio::streambuf stream;
+        struct request received;
+        boost::asio::read(socket, boost::asio::buffer(&header, sizeof(header)));
 
-            //Body is
-            boost::asio::read(socket, stream.prepare(header));
-            stream.commit(header);
+        //Body is
+        boost::asio::read(socket, stream.prepare(header));
+        stream.commit(header);
 
-            //Deserializzazione
-            std::istream is(&stream);
-            boost::archive::text_iarchive ar(is);
-            ar & received;
+        //Deserializzazione
+        std::istream is(&stream);
+        boost::archive::text_iarchive ar(is);
+        ar & received;
 
-            switch (received.packet_type) {
-                /**************************SYNCH REQUEST****************************/
-                case type::sync_request: {
-                    struct response res_synch;
-                    if(!manage_synch(received, res_synch)){
-                        std::cerr << "Fase di sincronizzazione fallita" << std::endl;
-                    };
-                    std::cout<<res_synch.gen_res.description<<std::endl;
-                    //Send res to the client
-                    std::vector<std::string>::iterator it;
-                    for(it=res_synch.sync_res.modified_paths.begin(); it!=res_synch.sync_res.modified_paths.end(); it++){
-                        std::cout << *it << std::endl;
-                    }
-                    if(!send(res_synch)){
-                        std::cerr << "Errore di connessione: impossibile mandare pacchetto di sincronizzazione." << std::endl;
-                    }
-                    break;
+        switch (received.packet_type) {
+            /**************************SYNCH REQUEST****************************/
+            case type::sync_request: {
+                struct response res_synch;
+                if(!manage_synch(received, res_synch)){
+                    std::cerr << "Fase di sincronizzazione fallita" << std::endl;
+                };
+                std::cout<<res_synch.gen_res.description<<std::endl;
+                //Send res to the client
+                std::vector<std::string>::iterator it;
+                for(it=res_synch.sync_res.modified_paths.begin(); it!=res_synch.sync_res.modified_paths.end(); it++){
+                    std::cout << *it << std::endl;
                 }
-                case type::auth_request: {
-                    struct response res_auth;
-                    if(!manage_auth(received, res_auth)){
-                        std::cerr << "Fase di authenticazione fallita" << std::endl;
-                    };
-                    //Send res to the client
-                    std::cout<<res_auth.gen_res.description<<std::endl;
-                    if(!send(res_auth)){
-                        std::cerr << "Errore di connessione: impossibile mandare pacchetto di autenticazione." << std::endl;
-                    }
-                    break;
+                if(!send(res_synch)){
+                    std::cerr << "Errore di connessione: impossibile mandare pacchetto di sincronizzazione." << std::endl;
                 }
-                case type::modify_request: {
-                    /***************************MODIFY REQUEST*************************/
-                    struct response res_mod;
-                    if(!manage_modify(received, res_mod)){
-                        std::cerr << "Modify phase failed" << std::endl;
-                    }
-                    //Send res to the client
-                    std::cout<<res_mod.gen_res.description<<std::endl;
-                    if(!send(res_mod)){
-                        std::cerr << "Errore di connessione: impossibile mandare pacchetto di modifica." << std::endl;
-                    }
-                    break;
-                }
-                case type::down_request: {
-                    struct response res;
-                    if(!manage_down(received, res)){
-                        std::cerr << "Modify phase failed" << std::endl;
-                    }
-                    //Send res to the client
-                    std::cout<<res.gen_res.description<<std::endl;
-                    if(!send(res)){
-                        std::cerr << "Errore di connessione: impossibile mandare pacchetto di modifica." << std::endl;
-                    }
-                    break;
-                }
-                case type::file_request: {
-                    struct response res;
-                    if(!manage_file(received, res)){
-                        std::cerr << "File Request failed" << std::endl;
-                    }
-                    //Send res to the client
-                    std::cout<<res.gen_res.description<<std::endl;
-                    if(!send(res)){
-                        std::cerr << "Errore di connessione: impossibile mandare pacchetto di modifica." << std::endl;
-                    }
-                    break;
-                }
-                default:
-                    break;
+                break;
             }
+            case type::auth_request: {
+                struct response res_auth;
+                if(!manage_auth(received, res_auth)){
+                    std::cerr << "Fase di authenticazione fallita" << std::endl;
+                };
+                //Send res to the client
+                std::cout<<res_auth.gen_res.description<<std::endl;
+                if(!send(res_auth)){
+                    std::cerr << "Errore di connessione: impossibile mandare pacchetto di autenticazione." << std::endl;
+                }
+                break;
+            }
+            case type::modify_request: {
+                /***************************MODIFY REQUEST*************************/
+                struct response res_mod;
+                if(!manage_modify(received, res_mod)){
+                    std::cerr << "Modify phase failed" << std::endl;
+                }
+                //Send res to the client
+                std::cout<<res_mod.gen_res.description<<std::endl;
+                if(!send(res_mod)){
+                    std::cerr << "Errore di connessione: impossibile mandare pacchetto di modifica." << std::endl;
+                }
+                break;
+            }
+            case type::down_request: {
+                struct response res;
+                if(!manage_down(received, res)){
+                    std::cerr << "Down phase failed" << std::endl;
+                }
+                //Send res to the client
+                std::cout<<res.gen_res.description<<std::endl;
+                if(!send(res)){
+                    std::cerr << "Errore di connessione: impossibile mandare pacchetto di modifica." << std::endl;
+                }
+                break;
+            }
+            case type::file_request: {
+                struct response res;
+                if(!manage_file(received, res)){
+                    std::cerr << "File Request failed" << std::endl;
+                }
+                //Send res to the client
+                std::cout<<res.gen_res.description<<std::endl;
+                if(!send(res)){
+                    std::cerr << "Errore di connessione: impossibile mandare pacchetto di modifica." << std::endl;
+                }
+                break;
+            }
+            default:
+                break;
+        }
     }
 
     std::string compute_pass_hash (std::string pass_clear){
@@ -224,34 +224,17 @@ private:
         return hashed;
     }
 
-
     int compute_hash(fs::path& path, std::string& hash){
-        SHA256_CTX ctx;
-        SHA256_Init(&ctx);
-        unsigned char md_value[SHA256_DIGEST_LENGTH] = {0};
-        unsigned char buf[SIZE];
-        int len;
-        std::cout << md_value << std::endl;
-
-        std::ifstream in;
-        in.open(path, std::ios::binary);
-        if(!in.is_open()){
+        if(!fs::exists(path))
             return 0;
-        }
-
-        int i=0;
-        while(!in.eof()) {
-            i++;
-            in.read((char *) buf, SIZE);
-            if (in.bad()) return 0;
-            else{
-                SHA256_Update(&ctx, buf, SIZE);
-            }
-        }
-
-        SHA256_Final(md_value, &ctx);
-
-        hash = reinterpret_cast< char const* >(md_value);
+        unsigned char result[MD5_DIGEST_LENGTH];
+        boost::iostreams::mapped_file_source src (path.string());
+        MD5((unsigned char*)src.data(), src.size(), result);
+        std::ostringstream sout;
+        sout<<std::hex<<std::setfill('0');
+        for (auto c:result)
+            sout<<std::setw(2)<<(int)c;
+        hash=sout.str();
         return 1;
     }
 
@@ -302,8 +285,9 @@ private:
                 res.sync_res.modified_paths.push_back(it->first);
             }
             else{
-                if(position->second!=it->second)//Hash diversi
+                if(position->second!=it->second) {//Hash diversi
                     res.sync_res.modified_paths.push_back(it->first);
+                }
             }
         }
 
@@ -316,15 +300,6 @@ private:
         res.sync_res.res = true;
         res.sync_res.description = "Synchronization succsessfully";
         return 1;
-        /*std::cout << "Server hashes" << std::endl;
-        for(auto it=current_hashs.begin(); it != current_hashs.end(); it++){
-            std::cout << it->first << ", " << it->second << std::endl;
-        }
-
-        std::cout << "Client hashes" << std::endl;
-        for(auto it=req.sync_req.client_paths.begin(); it != req.sync_req.client_paths.end(); it++){
-            std::cout << it->first << ", " << it->second << std::endl;
-        }*/
     }
 
     int manage_modify (struct request& req, struct response& res) {
@@ -344,6 +319,7 @@ private:
         std::ifstream ifile;
 
         if(req.mod.op==operation::create) {
+            std::cout << path_to_manage << std::endl;
             //Create a file in the temp directory
             if(req.mod.is_directory){
                 fs::create_directory(path_to_manage);
@@ -389,15 +365,14 @@ private:
                     return 0;
                 }
 
-                if(req.mod.content!="\0") {//Creazione di file
-                    fs << req.mod.content;
-                    if(fs.bad()){
-                        std::cout<<"Scrittura fallita."<<std::endl;
-                        res.gen_res.res = false;
-                        res.gen_res.description = "Errore durante la scrittura del file";
-                        return 0;
-                    }
+                fs << req.mod.content;
+                if(fs.bad()){
+                    std::cout<<"Scrittura fallita."<<std::endl;
+                    res.gen_res.res = false;
+                    res.gen_res.description = "Errore durante la scrittura del file";
+                    return 0;
                 }
+
                 fs.close();
                 if(fs::exists(temp_folder_file)) {
                     if(!std::filesystem::remove(temp_folder_file)){
@@ -516,7 +491,10 @@ private:
                 else {
                     std::string hash;
                     if(!compute_hash((fs::path &) file, hash)){
-                        std::cerr << "Error in computing hash." << std::endl;
+                        std::cerr << "Error" << std::endl;
+                        res.gen_res.res = false;
+                        res.gen_res.description = "Error: hash failed";
+                        std::cout << "Error: hash failed" << std::endl;
                         return 0;
                     }
                     else {
@@ -687,7 +665,6 @@ int load_certificates(){
     in.close();
     return 1;
 }
-
 
 int main() {
     if(!load_certificates()){

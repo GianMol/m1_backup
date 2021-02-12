@@ -11,12 +11,12 @@
 
 namespace fs = std::filesystem;
 
-/****** Global Variables ******/
-fs::path folder; //it is a global variable in order to get the subdirectories and files relative path
-std::queue<struct pair> queue;
+/***************** GLOBAL VARIABLES ***********************/
+fs::path folder; //monitorized folder
+std::queue<struct pair> queue; //request queue used by fileWatcher for handling requests
 std::mutex m;
 std::condition_variable cv;
-std::string token;
+std::string token; //token needed to autheticate client requests
 std::vector<fs::path> invalid;
 
 /***************** PROTOTYPES ***********************/
@@ -26,7 +26,7 @@ std::string translate_perms_to_string(fs::perms& p);
 fs::perms translate_string_to_perms(std::string& string);
 int compute_hash(fs::path& path, std::string& hash);
 int sync(fs::path& directory, std::string& id, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint);
-struct request create_modify_request(std::string& id, fs::path& path, enum operation op,  fs::file_status& status, std::string& buf);
+struct request create_modify_request(std::string& id, fs::path& path, enum operation op,  fs::file_status& status, std::string& buf, bool valid_content);
 int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint, operation op = create);
 int send(struct request & pack, socket_guard &socket);
 int receive(struct response & pack, socket_guard &socket);
@@ -39,6 +39,8 @@ int check(std::string& path, std::string& id, boost::asio::io_context& ctx, boos
 int check_folder (struct response& res, std::string& path);
 
 /******************** FUNCTIONS *****************************/
+
+//Translation path for Cygwin for Windows
 std::string translate_path_to_cyg(fs::path& path){
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__) || defined(__CYGWIN__)
     std::string fol = path.u8string();
@@ -56,6 +58,7 @@ std::string translate_path_to_cyg(fs::path& path){
     return path;
 }
 
+//Translation path for Windows
 std::string translate_path_to_win(fs::path& path){
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__) || defined(__CYGWIN__)
     std::string fol = path.u8string().substr(10);
@@ -74,10 +77,11 @@ std::string translate_path_to_win(fs::path& path){
     return path;
 }
 
+//Translation permissions into string
 std::string translate_perms_to_string(fs::perms& p){
     const fs::perms permissions[9] = {fs::perms::owner_read, fs::perms::owner_write, fs::perms::owner_exec,
-                                fs::perms::group_read, fs::perms::group_write, fs::perms::group_exec,
-                                fs::perms::others_read, fs::perms::others_write, fs::perms::others_exec};
+                                      fs::perms::group_read, fs::perms::group_write, fs::perms::group_exec,
+                                      fs::perms::others_read, fs::perms::others_write, fs::perms::others_exec};
 
     const std::string types[3] = {"r", "w", "x"};
 
@@ -89,10 +93,11 @@ std::string translate_perms_to_string(fs::perms& p){
     return res;
 }
 
+//Translation string into permissions
 fs::perms translate_string_to_perms(std::string& string){
     const fs::perms permissions[9] = {fs::perms::owner_read, fs::perms::owner_write, fs::perms::owner_exec,
-                                fs::perms::group_read, fs::perms::group_write, fs::perms::group_exec,
-                                fs::perms::others_read, fs::perms::others_write, fs::perms::others_exec};
+                                      fs::perms::group_read, fs::perms::group_write, fs::perms::group_exec,
+                                      fs::perms::others_read, fs::perms::others_write, fs::perms::others_exec};
     fs::perms p = fs::perms::none;
     int i = 0;
     for(i=0; i < 9; i++){
@@ -101,40 +106,26 @@ fs::perms translate_string_to_perms(std::string& string){
     return p;
 }
 
+//Computation of file/folder hash
 int compute_hash(fs::path& path, std::string& hash){
-    SHA256_CTX ctx;
-    SHA256_Init(&ctx);
-    unsigned char md_value[SHA256_DIGEST_LENGTH] = {0};
-    unsigned char buf[SIZE];
-    int len;
-    std::cout << md_value << std::endl;
-    std::cout << buf << std::endl;
-
-    std::ifstream in;
-    in.open(path, std::ios::binary);
-    if(!in.is_open()){
+    if(!fs::exists(path) || fs::is_directory(path))
         return 0;
-    }
-
-    int i=0;
-    while(!in.eof()) {
-        i++;
-        in.read((char *) buf, SIZE);
-        if (in.bad()) return 0;
-        else{
-            SHA256_Update(&ctx, buf, SIZE);
-        }
-    }
-
-    SHA256_Final(md_value, &ctx);
-
-    hash = reinterpret_cast< char const* >(md_value);
+    unsigned char result[MD5_DIGEST_LENGTH];
+    boost::iostreams::mapped_file_source src (path.string());
+    MD5((unsigned char*)src.data(), src.size(), result);
+    std::ostringstream sout;
+    sout<<std::hex<<std::setfill('0');
+    for (auto c:result)
+        sout<<std::setw(2)<<(int)c;
+    hash=sout.str();
     return 1;
 }
 
+//Initial synchronization: choice 2 of Menu
 int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint){
     std::map<std::string, std::string> all_paths;
     boost::system::error_code err;
+    //Creation of a SSL stream socket using boost library
     socket_guard socket(ctx, ssl_ctx);
 
     if(!fs::is_directory(directory)){
@@ -142,6 +133,7 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
         return 0;
     }
 
+    //Initialization all_path map (key: path, value: hash)
     for(auto &file : fs::recursive_directory_iterator(directory)) {
         std::string str_folder = (fs::path)file;
         int pos = str_folder.find_last_of('/');
@@ -165,12 +157,14 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
         }
     }
 
+    //Connection to the server (Connect Primitive)
     boost::asio::connect(socket.socket.lowest_layer(), endpoint, err);
 
     if (err) {
         std::cout << "Connection failed: " << err.message() << std::endl;
         return 0;
     }
+    //TLS handshake
     socket.socket.handshake(boost::asio::ssl::stream_base::client, err);
     if(err){
         std::cout << "Handshake failed: " << err.message() << std::endl;
@@ -196,13 +190,9 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
         return 0;
     }
 
+    //Closing socket
     socket.socket.lowest_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both);
     socket.socket.lowest_layer().close();
-
-    /*if(response.id != id){
-        std::cerr << "Error." << std::endl;
-        return 0;
-    }*/
 
     if(!response.sync_res.res){
         std::cerr << "Error: " << response.sync_res.description << std::endl;
@@ -221,24 +211,33 @@ int sync(fs::path& directory, std::string& id, boost::asio::io_context& ctx, boo
     return 1;
 }
 
-struct request create_modify_request(std::string& id, fs::path& path, enum operation op, fs::file_status& status, std::string& buf){
+//Initialization of struct request
+struct request create_modify_request(std::string& id, fs::path& path, enum operation op, fs::file_status& status, std::string& buf, bool valid_content=true){
     struct request pack;
     pack.id = id;
     pack.packet_type = modify_request;
     pack.token = token;
-    std::string p = path;   //we convert std::filesystem::path to a std::string to void problems like file names with spaces
+    std::string p = path.string();   //we convert std::filesystem::path to a std::string to void problems like file names with spaces
     pack.mod.path = fs::relative(p, folder);
     pack.mod.op = op;
-    pack.mod.is_directory = path.string().at(path.string().length() - 1) == '/' ? true : false;
+
+    if(op!=del)
+        #if defined(__linux__) || defined(linux) || defined(__linux)
+            pack.mod.is_directory = fs::is_directory(folder.string()+ "/"+ path.string());
+        #else
+            pack.mod.is_directory = path.string().at(path.string().length() - 1) == '/' ? true : false;
+        #endif
 
     //convert fs::permissions to std::string
     fs::perms perms = status.permissions();
     std::string permissions = translate_perms_to_string(perms);
     pack.mod.permissions = permissions;
-    pack.mod.content = buf;
+    if(valid_content)
+        pack.mod.content = buf;
     return pack;
 }
 
+//Initialization related to request type
 int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, boost::asio::ssl::context& ssl_ctx, boost::asio::ip::tcp::resolver::results_type& endpoint, operation op){
     std::string str_folder = path;
     int pos = str_folder.find_last_of('/');
@@ -268,7 +267,9 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
         // send path to server
         fs::file_status status = fs::status(path);
         path += "/";
-        struct request pack = create_modify_request(id, path, create, status, (std::string&)"\0");
+
+        std::cout << "ciao: " << path << std::endl;
+        struct request pack = create_modify_request(id, path, create, status, (std::string&)" ");
 
         //send to server
         if(!send(pack, socket)){
@@ -281,8 +282,8 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
         // send to server the information about the deletion of the file
 
         fs::file_status status = fs::status(path);
-        struct request pack = create_modify_request(id, path, del, status, (std::string&)"\0");
-        std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
+        struct request pack = create_modify_request(id, path, del, status, (std::string&)" ", false);
+        //std::cout << "path: " << pack.mod.path << " " << "op: " << pack.mod.op << std::endl;
 
         //send to server
         if(!send(pack, socket)){
@@ -323,8 +324,10 @@ int send_file(fs::path& path, std::string& id, boost::asio::io_context & ctx, bo
     return process_response(res);
 }
 
+//Sending a packet
 int send(struct request & pack, socket_guard &socket){
-    //preparing the archive to send
+
+    //Preparing the archive to send
     boost::asio::streambuf buf;
     std::ostream os(&buf);
     boost::archive::text_oarchive ar(os);
@@ -333,7 +336,7 @@ int send(struct request & pack, socket_guard &socket){
 
     const size_t header = buf.size();
 
-    // send header and buffer using scatter
+    //Send header and buffer using scatter
     std::vector<boost::asio::const_buffer> buffers;
     buffers.push_back(boost::asio::buffer(&header, sizeof(header)));
     buffers.push_back(buf.data());
@@ -348,6 +351,7 @@ int send(struct request & pack, socket_guard &socket){
     return rc;
 }
 
+//Receiving a packet
 int receive(struct response & pack, socket_guard &socket){
     size_t header;
 
@@ -617,14 +621,10 @@ int down(std::string& id, boost::asio::io_context& ctx, boost::asio::ssl::contex
                 std::cerr << "Shutdowning..." << std::endl;
                 return 0;
             }
-
-            if(res.file_res.content!="\0") {//Creazione di file
-
-                fs << res.file_res.content;
-                if(fs.bad()){
-                    std::cerr << "Error: Impossible writing on the file." << std::endl;
-                    return 0;
-                }
+            fs << res.file_res.content;
+            if(fs.bad()){
+                std::cerr << "Error: Impossible writing on the file." << std::endl;
+                return 0;
             }
             fs.close();
         }
@@ -678,22 +678,17 @@ int check(std::string& path, std::string& id, boost::asio::io_context& ctx, boos
         return 0;
     }
 
-    std::string path_to_manage = folder.string() + path;
-    for(auto& a: response.down_res.server_paths){
-        std::cout << a.first << std::endl;
-    }
+    std::string path_to_manage = folder.string() + "/" + path;
+
     if(!fs::is_directory(path_to_manage)){
         auto position = response.down_res.server_paths.find(path);
-        if(position==response.down_res.server_paths.end()){//Path non presente, bisogna inserirlo nel vettore
+        if(position==response.down_res.server_paths.end()){
             return -1;
         }
         else{
             std::string hash;
-            if(!compute_hash((fs::path&)path_to_manage, hash)){
-                return 0;
-            }
-            std::cout << hash << std::endl;
-            std::cout << position->second << std::endl;
+            compute_hash((fs::path&)path_to_manage, hash);
+
             if(position->second == hash)//Hash diversi
                 return 1;
             else
@@ -708,28 +703,37 @@ int check(std::string& path, std::string& id, boost::asio::io_context& ctx, boos
 
 int check_folder (struct response& res, std::string& path){
     std::string hash;
+#if defined(__linux__) || defined(linux) || defined(__linux)
+    std::string path_to_manage = folder.string() + "/" + path;
+#else
     std::string path_to_manage = folder.string() + path;
+#endif
+
     for(auto &f : fs::recursive_directory_iterator(path_to_manage)) {
         std::string file = f.path();
+        std::cout<<file<<std::endl;
         if(fs::is_directory(file)) {
             std::string str = fs::relative(file, folder);
             return check_folder(res, str);
         }
         else {
-            auto position = res.down_res.server_paths.find(path);
-            if(position==res.down_res.server_paths.end()){//Path non presente, bisogna inserirlo nel vettore
+            auto position = res.down_res.server_paths.find(fs::relative(file,folder));
+            if(position==res.down_res.server_paths.end()){
+                std::cout<<"Primo if"<<std::endl;
                 return -1;
             }
             else{
                 std::string hash;
-                if(!compute_hash((fs::path&)path_to_manage, hash)){
+                if(!compute_hash((fs::path&)file, hash)){
                     return 0;
                 }
-                if(position->second == hash)//Hash diversi
-                    return 1;
-                else
+                if(position->second != hash) {
+                    std::cout<<hash<<std::endl;
+                    std::cout<<position->second<<std::endl;
                     return -1;
+                }
             }
         }
     }
+    return 1;
 }

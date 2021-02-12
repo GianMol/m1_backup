@@ -8,6 +8,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <queue>
+#include <iomanip>
+#include <sstream>
 
 /*********** BOOST ***********/
 #include <boost/asio.hpp>
@@ -17,11 +19,13 @@
 #include <boost/serialization/string.hpp>
 #include <boost/serialization/vector.hpp>
 #include <boost/asio/ssl.hpp>
+#include <boost/iostreams/device/mapped_file.hpp>
 
 /********** OPENSSL **********/
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 #include <openssl/crypto.h>
+#include <openssl/md5.h>
 
 /*********** MYLIB ***********/
 #include "FileWatcher.h"
