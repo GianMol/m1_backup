@@ -73,10 +73,50 @@ private:
         socket.handshake(boost::asio::ssl::stream_base::server, error);
 
         if(!error){
-            execute_task();
+            try {
+                execute_task();
+            }
+            catch (boost::system::error_code& error){
+                std::cerr << "Error: " << error.message() << std::endl;
+            }
+            catch (std::iostream::failure& error){
+                std::cerr << "Exception opening/reading/closing file: " << error.what() << std::endl;
+                struct response res;
+                res.gen_res.res = false;
+                res.gen_res.description = "Server Error";
+                send(res);
+            }
+            catch (fs::filesystem_error& error){
+                std::cerr << "Filesystem exception: " << error.what() << std::endl;
+                struct response res;
+                res.gen_res.res = false;
+                res.gen_res.description = "Server Error";
+                send(res);
+            }
+            catch (std::invalid_argument& error){
+                std::cerr << "Invalid argument exception: " << error.what() << std::endl;
+                struct response res;
+                res.gen_res.res = false;
+                res.gen_res.description = "Server Error";
+                send(res);
+            }
+            catch (std::logic_error& error){
+                std::cerr << "Logic error exception: " << error.what() << std::endl;
+                struct response res;
+                res.gen_res.res = false;
+                res.gen_res.description = "Server Error";
+                send(res);
+            }
+            catch (std::exception& error){
+                std::cerr << "Generic error: " << error.what() << std::endl;
+                struct response res;
+                res.gen_res.res = false;
+                res.gen_res.description = "Server Error";
+                send(res);
+            }
         }
         else {
-            std::cout << "Handshake failed: " << error.message() << "\n";
+            std::cerr << "Handshake failed: " << error.message() << "\n";
         }
     }
 
@@ -113,15 +153,13 @@ private:
 
         const size_t rc = boost::asio::write(socket, buffers, err);
         if (err) {
-            std::cout << "Send failed: " << err.message() << std::endl;
+            std::cerr << "Send failed: " << err.message() << std::endl;
             return 0;
         }
-        std::cout << "Packet send." << std::endl;
         return rc;
     }
 
     void execute_task() {
-        std::cout << "Thread in esecuzione" << std::endl;
         boost::asio::streambuf stream;
         struct request received;
         boost::asio::read(socket, boost::asio::buffer(&header, sizeof(header)));
@@ -144,10 +182,6 @@ private:
                 };
                 std::cout<<res_synch.gen_res.description<<std::endl;
                 //Send res to the client
-                std::vector<std::string>::iterator it;
-                for(it=res_synch.sync_res.modified_paths.begin(); it!=res_synch.sync_res.modified_paths.end(); it++){
-                    std::cout << *it << std::endl;
-                }
                 if(!send(res_synch)){
                     std::cerr << "Errore di connessione: impossibile mandare pacchetto di sincronizzazione." << std::endl;
                 }
@@ -157,11 +191,12 @@ private:
                 struct response res_auth;
                 if(!manage_auth(received, res_auth)){
                     std::cerr << "Fase di authenticazione fallita" << std::endl;
-                };
+                    break;
+                }
                 //Send res to the client
                 std::cout<<res_auth.gen_res.description<<std::endl;
                 if(!send(res_auth)){
-                    std::cerr << "Errore di connessione: impossibile mandare pacchetto di autenticazione." << std::endl;
+                    std::cerr << "Connection error: impossible sending authentication packet." << std::endl;
                 }
                 break;
             }
@@ -170,11 +205,12 @@ private:
                 struct response res_mod;
                 if(!manage_modify(received, res_mod)){
                     std::cerr << "Modify phase failed" << std::endl;
+                    break;
                 }
                 //Send res to the client
                 std::cout<<res_mod.gen_res.description<<std::endl;
                 if(!send(res_mod)){
-                    std::cerr << "Errore di connessione: impossibile mandare pacchetto di modifica." << std::endl;
+                    std::cerr << "Connection error: impossible sending modify packet." << std::endl;
                 }
                 break;
             }
@@ -182,6 +218,7 @@ private:
                 struct response res;
                 if(!manage_down(received, res)){
                     std::cerr << "Down phase failed" << std::endl;
+                    break;
                 }
                 //Send res to the client
                 std::cout<<res.gen_res.description<<std::endl;
@@ -195,6 +232,7 @@ private:
                 struct response res;
                 if(!manage_file(received, res)){
                     std::cerr << "File Request failed" << std::endl;
+                    break;
                 }
                 //Send res to the client
                 std::cout<<res.gen_res.description<<std::endl;

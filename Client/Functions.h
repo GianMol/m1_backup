@@ -3,7 +3,6 @@
 #include "SocketGuard.cpp"
 #include "ThreadGuard.cpp"
 
-#define SIZE 1024
 #define SERVER "127.0.0.1"
 #define PORT "9999"
 #define FILE_PATHS "/Users/damiano/Documents/GitHub/m1_backup/Support/client_paths.txt"
