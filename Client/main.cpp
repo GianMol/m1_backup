@@ -20,7 +20,10 @@ int main(int argc, char* argv[]) {
     std::unique_lock<std::mutex> ul(m);
     boost::asio::io_context ctx;
     boost::asio::ssl::context ssl_ctx(boost::asio::ssl::context::tlsv12);
+
+    //Verification of server certificate
     ssl_ctx.load_verify_file(certificate);
+
     boost::asio::ip::tcp::resolver resolver(ctx);
     auto endpoint = resolver.resolve(SERVER, PORT);
 
@@ -39,7 +42,7 @@ int main(int argc, char* argv[]) {
     }
     /************************ Authentication Phase Ended ************************/
 
-    /*********** Fixing path in case of windows systems **********/
+    /****************** Fixing path in case of windows systems *****************/
     folder = translate_path_to_cyg(folder);
 
     if(!fs::is_directory(folder)){
@@ -47,11 +50,11 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    /************************ Synchronization Phase ************************/
+    /********************************** Menu **********************************/
     std::string choice_string = "0";
-    int choice = 0;
+    int choice;
     do {
-        std::cout << "********************** MENÙ **********************" << std::endl;
+        std::cout << std::endl << "********************** MENU **********************" << std::endl;
         std::cout
                 << "1) Download backup from remote server." << std::endl
                 << "2) Synchronize server from local folder." << std::endl
@@ -59,6 +62,8 @@ int main(int argc, char* argv[]) {
                 << "4) Exit." << std::endl;
 
         std::cin >> choice_string;
+
+        //Fixing user input in case of unexpected or tainted data
         try{
             choice = boost::lexical_cast<int>(choice_string.at(0));
         }
@@ -99,8 +104,11 @@ int main(int argc, char* argv[]) {
                 else if(result == -1){
                     std::cout << "File is not synchronized" << std::endl;
                 }
+                else if(result == -2){
+                    std::cout << "File does not exist" << std::endl;
+                }
                 else {
-                    std::cout << "File is synchronized" << std::endl;
+                    std::cout << "File synchronized" << std::endl;
                 }
                 break;
             }
@@ -114,12 +122,16 @@ int main(int argc, char* argv[]) {
         }
     }
     while(0 <= choice && choice < 4);
-    /********************* Synchronization Phase Ended *********************/
+    /****************************** Menu End ******************************/
 
-    /******************* monitoring phase *************************/
+    /*********************** Monitoring Phase ****************************/
+
+    //A secondary thread aims to monitor local changes
     std::thread thread(file_watcher);
     ThreadGuard t_guard(thread);
 
+    //A shared pair queue, accessible through the use of a condition variable, is used to handle changes between the file watcher trhead and the main one,
+    //Which is responsible of communicating with server
     while(true){
         cv.wait(ul, [](){return !queue.empty();});
         struct pair p = queue.front();
@@ -128,9 +140,10 @@ int main(int argc, char* argv[]) {
 
         std::cout << p.path << ", " << (p.status == FileStatus::created? "created" : (p.status == FileStatus::modified? "modified" : "erased")) << std::endl;
         fs::path path_relative = fs::relative(p.path, folder);
-        //send file
+
+        //Send file
         if(!send_file(path_relative, id, ctx, ssl_ctx, endpoint, p.status == FileStatus::erased? operation::del : operation::create)){
-            //here goes network error
+            //Network error
             std::cerr << "Error: Impossible sending " + p.path.string() << std::endl;
         }
         else{

@@ -84,14 +84,10 @@ struct sync_request{
 
 struct sync_response{
     std::vector<std::string> modified_paths;
-    bool res;
-    std::string description;
 
     template <class Archive>
     void serialize(Archive& ar, unsigned int version){
         ar & modified_paths;
-        ar & res;
-        ar & description;
     }
 };
 

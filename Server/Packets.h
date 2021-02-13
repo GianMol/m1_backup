@@ -29,6 +29,8 @@
 
 /*********** MYLIB ***********/
 #include "FileWatcher.h"
+#include "ThreadGuardVector.cpp"
+#include <sqlite3.h>
 
 namespace fs = std::filesystem;
 
@@ -83,23 +85,19 @@ struct sync_request{
 
 struct sync_response{
     std::vector<std::string> modified_paths;
-    bool res;
-    std::string description;
 
     template <class Archive>
     void serialize(Archive& ar, unsigned int version){
         ar & modified_paths;
-        ar & res;
-        ar & description;
     }
 };
 
 struct down_response{
-    std::map<std::string, std::string> client_paths;
+    std::map<std::string, std::string> server_paths;
 
     template <class Archive>
     void serialize(Archive& ar, unsigned int version){
-        ar & client_paths;
+        ar & server_paths;
     }
 };
 
