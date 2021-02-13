@@ -20,6 +20,7 @@
 #include <boost/serialization/vector.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/iostreams/device/mapped_file.hpp>
+#include <boost/lexical_cast.hpp>
 
 /********** OPENSSL **********/
 #include <openssl/evp.h>

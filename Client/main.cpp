@@ -5,48 +5,50 @@ namespace fs = std::filesystem;
 int main(int argc, char* argv[]) {
     if(argc < 3){
         std::cerr << "Error: parameters missing";
-        return -1;
+        return 0;
     }
 
     std::string id = argv[1];
-    std::string password = argv[2];
+    password = argv[2];
     std::string certificate;
+
     if(!load_certificate(certificate)){
         std::cerr << "Error: list of certificate files missing. Shutdowning..." << std::endl;
         return 0;
     }
 
     std::unique_lock<std::mutex> ul(m);
-
     boost::asio::io_context ctx;
     boost::asio::ssl::context ssl_ctx(boost::asio::ssl::context::tlsv12);
     ssl_ctx.load_verify_file(certificate);
     boost::asio::ip::tcp::resolver resolver(ctx);
     auto endpoint = resolver.resolve(SERVER, PORT);
 
-
-    /*********** authentication phase ***************************/
-
+    /*************************** Authentication Phase ***************************/
     struct request auth_pack;
     auth_pack.id = id;
     auth_pack.packet_type = auth_request;
     auth_pack.auth.password = password;
 
-    if(!auth(auth_pack, ctx, ssl_ctx, endpoint)){
-        return -1;
+    if(auth(auth_pack, ctx, ssl_ctx, endpoint) != 1){
+        std::cerr << "Shutdowning..." << std::endl;
+        return 0;
     }
+    else{
+        std::cout << "Authentication ok" << std::endl;
+    }
+    /************************ Authentication Phase Ended ************************/
 
-    /*********** authentication phase ended **********************/
-
-    /*********** fixing path in case of windows systems **********/
+    /*********** Fixing path in case of windows systems **********/
     folder = translate_path_to_cyg(folder);
 
     if(!fs::is_directory(folder)){
         std::cerr << "Error: the argument is not a directory. Shutdowning..." << std::endl;
-        return -1;
+        return 0;
     }
-    /************ synchronization phase ***************************/
 
+    /************************ Synchronization Phase ************************/
+    std::string choice_string = "0";
     int choice = 0;
     do {
         std::cout << "********************** MENÙ **********************" << std::endl;
@@ -55,13 +57,21 @@ int main(int argc, char* argv[]) {
                 << "2) Synchronize server from local folder." << std::endl
                 << "3) Check the synchronization of some data."<< std::endl
                 << "4) Exit." << std::endl;
-        std::cin >> choice;
+
+        std::cin >> choice_string;
+        try{
+            choice = boost::lexical_cast<int>(choice_string.at(0));
+        }
+        catch (boost::bad_lexical_cast const& err) {
+            choice = 0;
+        }
+
         switch(choice){
             case 1: {
                 std::cout << "Downloading backup..." << std::endl;
                 if (!down(id, ctx, ssl_ctx, endpoint)) {
-                    std::cerr << "Error in synchronization." << std::endl;
-                    return -1;
+                    std::cerr << "Error in downloading." << std::endl;
+                    return 0;
                 }
                 std::cout << "Download succeded." << std::endl;
                 choice = -1;
@@ -69,9 +79,9 @@ int main(int argc, char* argv[]) {
             }
             case 2: {
                 std::cout << "Synchronizing folder..." << folder << std::endl;
-                if (!sync(folder, id, ctx, ssl_ctx, endpoint)) {
+                if (sync(folder, id, ctx, ssl_ctx, endpoint) != 1) {
                     std::cerr << "Error in synchronization." << std::endl;
-                    return -1;
+                    return 0;
                 }
                 std::cout << "Synchronization succeded." << std::endl;
                 choice = -1;
@@ -80,12 +90,11 @@ int main(int argc, char* argv[]) {
             case 3: {
                 std::cout << "Insert path to check: " << std::endl;
                 std::string path;
-                std::cin >> path;
+                std::cin.ignore();
+                std::getline(std::cin, path);
                 int result = check(path, id, ctx, ssl_ctx, endpoint);
                 if(result == 0){
                     std::cerr << "Impossible checking path" << std::endl;
-                    std::cerr << "Shutdowning..." << std::endl;
-                    return 0;
                 }
                 else if(result == -1){
                     std::cout << "File is not synchronized" << std::endl;
@@ -100,13 +109,12 @@ int main(int argc, char* argv[]) {
                 return 0;
             }
             default:
+                choice = 0;
                 std::cout << "Insert a valid value." << std::endl;
         }
     }
     while(0 <= choice && choice < 4);
-
-
-    /************ synchronization phase ended *********************/
+    /********************* Synchronization Phase Ended *********************/
 
     /******************* monitoring phase *************************/
     std::thread thread(file_watcher);
@@ -119,9 +127,9 @@ int main(int argc, char* argv[]) {
         cv.notify_all();
 
         std::cout << p.path << ", " << (p.status == FileStatus::created? "created" : (p.status == FileStatus::modified? "modified" : "erased")) << std::endl;
-
+        fs::path path_relative = fs::relative(p.path, folder);
         //send file
-        if(!send_file(p.path, id, ctx, ssl_ctx, endpoint, p.status == FileStatus::erased? operation::del : operation::create)){
+        if(!send_file(path_relative, id, ctx, ssl_ctx, endpoint, p.status == FileStatus::erased? operation::del : operation::create)){
             //here goes network error
             std::cerr << "Error: Impossible sending " + p.path.string() << std::endl;
         }

@@ -65,7 +65,6 @@ public:
 
 private:
     boost::asio::ssl::stream<tcp::socket> socket;
-    char data_[1024];
     size_t header;
 
     void handshake(){
@@ -192,6 +191,7 @@ private:
                 break;
             }
             case type::file_request: {
+                std::cout << received.file_req.path << std::endl;
                 struct response res;
                 if(!manage_file(received, res)){
                     std::cerr << "File Request failed" << std::endl;
@@ -241,7 +241,9 @@ private:
     int manage_synch (struct request& req, struct response& res){
         if(tokens.find(req.id)->second != req.token){
             res.sync_res.res = false;
+            res.gen_res.res = false;
             res.sync_res.description = "User not authorized";
+            res.gen_res.description = "User not authorized";
             return 0;
         }
         std::map <std::string, std::string> current_hashs;
@@ -255,7 +257,9 @@ private:
 
         if(!fs::exists(folder)) {
             res.sync_res.res = false;
+            res.gen_res.res = false;
             res.sync_res.description = "Error: directory doesn't exist";
+            res.gen_res.description = "Error: directory doesn't exist";
             std::cout << "Error: directory doesn't exist" << std::endl;
             return 0;
         }
@@ -270,7 +274,9 @@ private:
             else if(!compute_hash((fs::path &) file, hash)){
                 std::cerr << "Error" << std::endl;
                 res.sync_res.res = false;
+                res.gen_res.res = false;
                 res.sync_res.description = "Error: hash failed";
+                res.gen_res.description = "Error: hash failed";
                 std::cout << "Error: hash failed" << std::endl;
                 return 0;
             }
@@ -298,6 +304,7 @@ private:
             }
         }
         res.sync_res.res = true;
+        res.gen_res.res = true;
         res.sync_res.description = "Synchronization succsessfully";
         return 1;
     }
@@ -322,6 +329,7 @@ private:
             std::cout << path_to_manage << std::endl;
             //Create a file in the temp directory
             if(req.mod.is_directory){
+                std::cout << "OOOOO" << std::endl;
                 fs::create_directory(path_to_manage);
                 res.gen_res.res = true;
                 res.gen_res.description = "Directory creata con successo!";
@@ -506,6 +514,7 @@ private:
 
         res.packet_type = down_response;
         res.id = req.id;
+        res.gen_res.res = true;
         res.token = req.token;
         res.down_res.client_paths = all_paths;
         return 1;
@@ -516,13 +525,18 @@ private:
         std::string absolute_path = files[4] + req.id + "/backup/" + req.file_req.path;
         in.open(absolute_path, std::ios::binary);
         if (!in.is_open()) {
+            res.gen_res.description = "Error in opening file";
+            res.gen_res.res = false;
             return 0;
         }
         std::streambuf *buf;
         buf = in.rdbuf();
 
-        if (in.bad())
+        if (in.bad()) {
+            res.gen_res.description = "Error in opening file";
+            res.gen_res.res = false;
             return 0;
+        }
 
         std::string content((std::istreambuf_iterator<char>(buf)), std::istreambuf_iterator<char>());
         fs::file_status status = fs::status(req.file_req.path);
@@ -539,6 +553,7 @@ private:
         fs::perms perms = status.permissions();
         std::string permissions = translate_perms_to_string(perms);
         res.file_res.permissions = permissions;
+        res.gen_res.res = true;
 
         in.close();
         return 1;
@@ -560,7 +575,6 @@ private:
             if(out ==0){
                 //Digests are equal
                 //Set auth_response with successfull state
-                res.gen_res.description="Authentication ok";
                 res.gen_res.res=true;
                 gen_random(res.token, 512);
                 if(tokens.find(req.id) != tokens.end()){
