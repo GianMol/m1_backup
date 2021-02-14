@@ -3,7 +3,7 @@
 namespace fs = std::filesystem;
 
 int main(int argc, char* argv[]) {
-    if(argc < 3){
+    if (argc < 3) {
         std::cerr << "Error: parameters missing";
         return 0;
     }
@@ -12,7 +12,7 @@ int main(int argc, char* argv[]) {
     password = argv[2];
     std::string certificate;
 
-    if(!load_certificate(certificate)){
+    if (!load_certificate(certificate)) {
         std::cerr << "Error: list of certificate files missing. Shutdowning..." << std::endl;
         return 0;
     }
@@ -33,11 +33,10 @@ int main(int argc, char* argv[]) {
     auth_pack.packet_type = auth_request;
     auth_pack.auth.password = password;
 
-    if(auth(auth_pack, ctx, ssl_ctx, endpoint) != 1){
+    if (auth(auth_pack, ctx, ssl_ctx, endpoint) != 1) {
         std::cerr << "Shutdowning..." << std::endl;
         return 0;
-    }
-    else{
+    } else {
         std::cout << "Authentication ok" << std::endl;
     }
     /************************ Authentication Phase Ended ************************/
@@ -45,7 +44,7 @@ int main(int argc, char* argv[]) {
     /****************** Fixing path in case of windows systems *****************/
     folder = translate_path_to_cyg(folder);
 
-    if(!fs::is_directory(folder)){
+    if (!fs::is_directory(folder)) {
         std::cerr << "Error: the argument is not a directory. Shutdowning..." << std::endl;
         return 0;
     }
@@ -58,20 +57,20 @@ int main(int argc, char* argv[]) {
         std::cout
                 << "1) Download backup from remote server." << std::endl
                 << "2) Synchronize server from local folder." << std::endl
-                << "3) Check the synchronization of some data."<< std::endl
+                << "3) Check the synchronization of some data." << std::endl
                 << "4) Exit." << std::endl;
 
         std::cin >> choice_string;
 
         //Fixing user input in case of unexpected or tainted data
-        try{
+        try {
             choice = boost::lexical_cast<int>(choice_string.at(0));
         }
-        catch (boost::bad_lexical_cast const& err) {
+        catch (boost::bad_lexical_cast const &err) {
             choice = 0;
         }
 
-        switch(choice){
+        switch (choice) {
             case 1: {
                 std::cout << "Downloading backup..." << std::endl;
                 if (!down(id, ctx, ssl_ctx, endpoint)) {
@@ -98,14 +97,14 @@ int main(int argc, char* argv[]) {
                 std::cin.ignore();
                 std::getline(std::cin, path);
                 int result = check(path, id, ctx, ssl_ctx, endpoint);
-                if(result == 0){
+                if (result == 0) {
                     std::cerr << "Impossible checking path" << std::endl;
-                }
-                else if(result == -1){
+                } else if (result == -1) {
                     std::cout << "File is not synchronized" << std::endl;
-                }
-                else if(result == -2){
-                    std::cout << "File does not exist" << std::endl;
+                } else if (result == -2) {
+                    std::cout << "File does not exist in local folder" << std::endl;
+                } else if (result == -3){
+                    std::cout << "File does not exist in remote folder" << std::endl;
                 }
                 else {
                     std::cout << "File synchronized" << std::endl;
@@ -120,8 +119,7 @@ int main(int argc, char* argv[]) {
                 choice = 0;
                 std::cout << "Insert a valid value." << std::endl;
         }
-    }
-    while(0 <= choice && choice < 4);
+    } while (0 <= choice && choice < 4);
     /****************************** Menu End ******************************/
 
     /*********************** Monitoring Phase ****************************/
@@ -132,23 +130,25 @@ int main(int argc, char* argv[]) {
 
     //A shared pair queue, accessible through the use of a condition variable, is used to handle changes between the file watcher trhead and the main one,
     //Which is responsible of communicating with server
-    while(true){
-        cv.wait(ul, [](){return !queue.empty();});
+    while (true) {
+        cv.wait(ul, []() { return !queue.empty(); });
         struct pair p = queue.front();
         queue.pop();
         cv.notify_all();
-
-        std::cout << p.path << ", " << (p.status == FileStatus::created? "created" : (p.status == FileStatus::modified? "modified" : "erased")) << std::endl;
         fs::path path_relative = fs::relative(p.path, folder);
 
+        std::cout << path_relative << ", "
+                  << (p.status == FileStatus::created ? "created" : (p.status == FileStatus::modified ? "modified"
+                                                                                                      : "erased"))
+                  << std::endl;
+
         //Send file
-        if(!send_file(path_relative, id, ctx, ssl_ctx, endpoint, p.status == FileStatus::erased? operation::del : operation::create)){
+        if (!send_file(path_relative, id, ctx, ssl_ctx, endpoint,p.status == FileStatus::erased ? operation::del : operation::create)) {
             //Network error
             std::cerr << "Error: Impossible sending " + p.path.string() << std::endl;
-        }
-        else{
+        } else {
             auto it = std::find(invalid.begin(), invalid.end(), p.path);
-            if(it != invalid.end()){
+            if (it != invalid.end()) {
                 invalid.erase(it);
             }
         }
